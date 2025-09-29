@@ -1,6 +1,15 @@
 // server.js
 import http from 'http';
 import { WebSocketServer } from 'ws';
+import { Connection, PublicKey, clusterApiUrl } from '@solana/web3.js';
+
+// reads your address from Render's env var
+const RECEIVER_PUBKEY = new PublicKey(process.env.RECEIVER_PUBKEY);
+
+const CLAIM_DURATION_MS = 15 * 60 * 1000;
+const MIN_LAMPORTS = Math.floor(0.1 * 1e9);
+
+const connection = new Connection(clusterApiUrl('mainnet-beta'), 'confirmed');
 
 const LOG_MAX = 300;
 let log = []; // [{type:'system'|'user', user?, text, ts}]
