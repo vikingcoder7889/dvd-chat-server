@@ -4,7 +4,7 @@ import { WebSocketServer } from 'ws';
 import { Connection, PublicKey, clusterApiUrl } from '@solana/web3.js';
 
 // --- Config (env + pricing/duration) ---
-const RECEIVER_PUBKEY = new PublicKey(process.env.RECEIVER_PUBKEY || 'GF34Uc25emR9LgWvPK4nGd1nRnBsa5vvNHyAo8NxiZGE'); // set in Render
+const RECEIVER_PUBKEY = new PublicKey(process.env.RECEIVER_PUBKEY); // set in Render
 const CLAIM_DURATION_MS = 15 * 60 * 1000;           // 15 minutes
 const MIN_LAMPORTS     = Math.floor(0.01 * 1e9);    // 0.01 SOL
 const DEFAULT_OVERLAY_LOGO = '/dvd_logo-bouncing.png';
@@ -213,3 +213,31 @@ if (!(isHttpsImage(imageUrl) || isDataImage(imageUrl))) {
 
 const PORT = process.env.PORT || 8787;
 server.listen(PORT, () => console.log('chat ws listening on :' + PORT));
+
+
+// --- Create transfer transaction (server-side) ---
+app.post('/create-transfer', express.json(), async (req, res) => {
+  try {
+    const { Connection, PublicKey, SystemProgram, Transaction, clusterApiUrl } = require('@solana/web3.js');
+    const from = new PublicKey(String(req.body?.fromPubkey||''));
+    const lamports = Number(req.body?.lamports || 0);
+    if (!lamports || lamports < 1e4) return res.status(400).json({ error: 'invalid amount' });
+
+    const RECEIVER_PUBKEY = new PublicKey(process.env.RECEIVER_PUBKEY || 'GF34Uc25emR9LgWvPK4nGd1nRnBsa5vvNHyAo8NxiZGE');
+
+    const connection = new Connection(clusterApiUrl('mainnet-beta'), 'confirmed');
+    const { blockhash } = await connection.getLatestBlockhash('confirmed');
+
+    const tx = new Transaction({ feePayer: from, recentBlockhash: blockhash }).add(
+      SystemProgram.transfer({ fromPubkey: from, toPubkey: RECEIVER_PUBKEY, lamports })
+    );
+
+    const txSer = tx.serialize({ requireAllSignatures: false, verifySignatures: false });
+    res.set('Access-Control-Allow-Origin', '*');
+    res.json({ txBase64: txSer.toString('base64') });
+  } catch (e) {
+    console.error('create-transfer error', e);
+    res.status(500).json({ error: e?.message || 'server error' });
+  }
+});
+
