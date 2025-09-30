@@ -119,17 +119,28 @@ wss.on('connection', (ws) => {
     if (msg.t === 'logo_claim') {
       const { tx, imageUrl } = msg;
 
-      // Validate URL (https + image extension)
-      try {
-        const u = new URL(imageUrl);
-        if (u.protocol !== 'https:' || !/\.(png|jpg|jpeg|webp|gif|svg)(\?|#|$)/i.test(u.pathname)) {
-          ws.send(JSON.stringify({ t: 'error', text: 'Invalid image URL' }));
-          return;
-        }
-      } catch {
-        ws.send(JSON.stringify({ t: 'error', text: 'Invalid image URL' }));
-        return;
-      }
+      // Validate image reference: either https://...image.(png|jpg|jpeg|webp|gif|svg) OR data:image/*;base64,...
+const MAX_DATAURL_CHARS = 800_000; // ~600KB base64 payload limit
+
+function isHttpsImage(urlStr){
+  try {
+    const u = new URL(urlStr);
+    return u.protocol === 'https:' && /\.(png|jpg|jpeg|webp|gif|svg)(\?|#|$)/i.test(u.pathname);
+  } catch { return false; }
+}
+
+function isDataImage(urlStr){
+  // basic shape: data:image/png;base64,AAAA...
+  if (typeof urlStr !== 'string' || urlStr.length > MAX_DATAURL_CHARS) return false;
+  if (!urlStr.startsWith('data:image/')) return false;
+  // must be base64 for safety/compat
+  return /;base64,/.test(urlStr);
+}
+
+if (!(isHttpsImage(imageUrl) || isDataImage(imageUrl))) {
+  ws.send(JSON.stringify({ t:'error', text:'Invalid image (must be https image URL or data:image/*;base64)' }));
+  return;
+}
 
       try {
         const parsed = await connection.getParsedTransaction(tx, {
