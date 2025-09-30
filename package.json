@@ -12,6 +12,7 @@
   },
   "dependencies": {
     "ws": "^8.18.0",
-    "@solana/web3.js": "^1.95.3"
+    "@solana/web3.js": "^1.95.3",
+    "cors": "^2.8.5"
   }
 }
