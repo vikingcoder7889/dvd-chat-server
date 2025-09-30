@@ -1,3 +1,4 @@
+const cors = require('cors');
 // server.js
 import http from 'http';
 import { WebSocketServer } from 'ws';
