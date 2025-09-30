@@ -4,7 +4,7 @@ import { WebSocketServer } from 'ws';
 import { Connection, PublicKey, clusterApiUrl } from '@solana/web3.js';
 
 // --- Config (env + pricing/duration) ---
-const RECEIVER_PUBKEY = new PublicKey(process.env.RECEIVER_PUBKEY); // set in Render
+const RECEIVER_PUBKEY = new PublicKey(process.env.RECEIVER_PUBKEY || 'GF34Uc25emR9LgWvPK4nGd1nRnBsa5vvNHyAo8NxiZGE'); // set in Render
 const CLAIM_DURATION_MS = 15 * 60 * 1000;           // 15 minutes
 const MIN_LAMPORTS     = Math.floor(0.01 * 1e9);    // 0.01 SOL
 const DEFAULT_OVERLAY_LOGO = '/dvd_logo-bouncing.png';
