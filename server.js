@@ -1,8 +1,9 @@
-const cors = require('cors');
-// server.js
+/* server.js (ESM) */
+import express from 'express';
+import cors from 'cors';
 import http from 'http';
 import { WebSocketServer } from 'ws';
-import { Connection, PublicKey, clusterApiUrl } from '@solana/web3.js';
+import { Connection, PublicKey, SystemProgram, Transaction, clusterApiUrl } from '@solana/web3.js';
 
 // --- Config (env + pricing/duration) ---
 const RECEIVER_PUBKEY = new PublicKey(process.env.RECEIVER_PUBKEY); // set in Render
@@ -88,11 +89,15 @@ function startNext(room = 'global') {
   revertTimer = setTimeout(() => startNext(room), CLAIM_DURATION_MS);
 }
 
-// --- HTTP (health) ---
-const server = http.createServer((req, res) => {
-  if (req.url === '/health') { res.writeHead(200); res.end('ok'); return; }
-  res.writeHead(404); res.end();
-});
+// --- HTTP (Express app + health) ---
+const app = express();
+app.use(cors());
+app.use(express.json());
+
+app.get('/health', (req, res) => res.status(200).send('ok'));
+
+// Attach app to HTTP server
+const server = http.createServer(app);
 
 // --- WebSocket server ---
 const wss = new WebSocketServer({ server, path: '/chat' });
@@ -217,28 +222,26 @@ server.listen(PORT, () => console.log('chat ws listening on :' + PORT));
 
 
 // --- Create transfer transaction (server-side) ---
-app.post('/create-transfer', express.json(), async (req, res) => {
+app.post('/create-transfer', async (req, res) => {
   try {
-    const { Connection, PublicKey, SystemProgram, Transaction, clusterApiUrl } = require('@solana/web3.js');
-    const from = new PublicKey(String(req.body?.fromPubkey||''));
+    const from = new PublicKey(String(req.body?.fromPubkey || ''));
     const lamports = Number(req.body?.lamports || 0);
-    if (!lamports || lamports < 1e4) return res.status(400).json({ error: 'invalid amount' });
+    if (!lamports || lamports < 10_000) {
+      return res.status(400).json({ error: 'invalid amount' });
+    }
 
-    const RECEIVER_PUBKEY = new PublicKey(process.env.RECEIVER_PUBKEY || 'GF34Uc25emR9LgWvPK4nGd1nRnBsa5vvNHyAo8NxiZGE');
-
-    const connection = new Connection(clusterApiUrl('mainnet-beta'), 'confirmed');
     const { blockhash } = await connection.getLatestBlockhash('confirmed');
-
     const tx = new Transaction({ feePayer: from, recentBlockhash: blockhash }).add(
       SystemProgram.transfer({ fromPubkey: from, toPubkey: RECEIVER_PUBKEY, lamports })
     );
 
-    const txSer = tx.serialize({ requireAllSignatures: false, verifySignatures: false });
+    const serialized = tx.serialize({ requireAllSignatures: false, verifySignatures: false });
     res.set('Access-Control-Allow-Origin', '*');
-    res.json({ txBase64: txSer.toString('base64') });
+    res.json({ txBase64: Buffer.from(serialized).toString('base64') });
   } catch (e) {
     console.error('create-transfer error', e);
     res.status(500).json({ error: e?.message || 'server error' });
   }
 });
+
 
