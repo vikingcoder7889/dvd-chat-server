@@ -4,15 +4,12 @@
   "type": "module",
   "main": "server.js",
   "license": "MIT",
-  "scripts": {
-    "start": "node server.js"
-  },
-  "engines": {
-    "node": ">=18"
-  },
+  "scripts": { "start": "node server.js" },
+  "engines": { "node": ">=18" },
   "dependencies": {
     "ws": "^8.18.0",
     "@solana/web3.js": "^1.95.3",
-    "cors": "^2.8.5"
+    "cors": "^2.8.5",
+    "express": "^4.19.2"
   }
 }
