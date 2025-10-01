@@ -10,25 +10,6 @@ const RECEIVER_PUBKEY = new PublicKey(process.env.RECEIVER_PUBKEY); // set in Re
 const CLAIM_DURATION_MS = 15 * 60 * 1000;           // 15 minutes
 const MIN_LAMPORTS     = Math.floor(0.01 * 1e9);    // 0.01 SOL
 const DEFAULT_OVERLAY_LOGO = '/dvd_logo-bouncing.png';
-// --- Global state for the currently active logo (shared by all clients) ---
-let currentLogo = {
-  imageUrl: DEFAULT_OVERLAY_LOGO,
-  expiresAt: '1970-01-01T00:00:00.000Z',
-  setBy: 'system',
-};
-
-// helper to send the current logo to one client
-function sendCurrentLogo(ws) {
-  try {
-    ws.send(JSON.stringify({
-      t: 'logo_current',
-      imageUrl: currentLogo.imageUrl,
-      expiresAt: currentLogo.expiresAt,
-      setBy: currentLogo.setBy,
-    }));
-  } catch {}
-}
-
 const connection = new Connection(clusterApiUrl('mainnet-beta'), 'confirmed');
 
 // --- Chat history, clients, broadcast helpers ---
