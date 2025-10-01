@@ -125,7 +125,7 @@ wss.on('connection', (ws) => {
       const { tx, imageUrl } = msg;
 
       // Validate image reference: either https://...image.(png|jpg|jpeg|webp|gif|svg) OR data:image/*;base64,...
-const MAX_DATAURL_CHARS = 800_000; // ~600KB base64 payload limit
+const MAX_DATAURL_CHARS = 2_900_000; // ~2MB base64 payload limit
 
 function isHttpsImage(urlStr){
   try {
