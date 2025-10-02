@@ -11,6 +11,19 @@ const CLAIM_DURATION_MS = 15 * 60 * 1000;           // 15 minutes
 const MIN_LAMPORTS     = Math.floor(0.01 * 1e9);    // 0.01 SOL
 const DEFAULT_OVERLAY_LOGO = '/dvd_logo-bouncing.png';
 const connection = new Connection(clusterApiUrl('mainnet-beta'), 'confirmed');
+// --- canonical time & physics (global) ---
+const nowMs = () => Date.now();
+
+// Choose a fixed "world" so motion is identical for everyone, regardless of canvas size
+const WORLD_W = 1920;
+const WORLD_H = 1080;
+
+// Logical logo size inside the world (scale on the client)
+const LOGO_W  = 300;
+const LOGO_H  = 180;
+
+// Initial speed in world units per second (tweak to taste)
+const SPEED   = 380;
 
 // --- Chat history, clients, broadcast helpers ---
 const LOG_MAX = 300;
@@ -43,14 +56,40 @@ const queue = [];  // [{ imageUrl, setBy, tx }]
 let active = null; // { imageUrl, setBy, tx, startedAt, expiresAt }
 let revertTimer = null;
 
-function broadcastLogo(room = 'global') {
+  const startAt = nowMs();
+
+  // deterministic direction derived from imageUrl (simple hash)
+  const seed = [...String(currentLogo.imageUrl || DEFAULT_OVERLAY_LOGO)]
+    .reduce((a, c) => ((a << 5) - a + c.charCodeAt(0)) | 0, 0) >>> 0;
+  const ang = (seed % 360) * Math.PI / 180;
+  const vx  = Math.cos(ang) * SPEED;
+  const vy  = Math.sin(ang) * SPEED;
+
+  // start centered in the world
+  const x0 = (WORLD_W - LOGO_W) / 2;
+  const y0 = (WORLD_H - LOGO_H) / 2;
+
   broadcast({
     t: 'logo_current',
     imageUrl: currentLogo.imageUrl,
     expiresAt: new Date(currentLogo.expiresAt).toISOString(),
     setBy: currentLogo.setBy,
+
+    // NEW: canonical physics the clients will follow
+    phys: {
+      worldW: WORLD_W,
+      worldH: WORLD_H,
+      logoW:  LOGO_W,
+      logoH:  LOGO_H,
+      x0, y0,
+      vx, vy,
+      t0: startAt
+    },
+
+    // also include server “now” for time sync
+    now: nowMs()
   }, room);
-}
+
 
 function broadcastQueueSize(room = 'global') {
   const n = (active ? 1 : 0) + queue.length;
@@ -109,6 +148,14 @@ wss.on('connection', (ws) => {
   broadcastLogo(meta.room);        // NEW: send current logo state
   broadcastQueueSize(meta.room);   // NEW: send queue size
   broadcast({ t: 'count', n: clients.size });
+
+  // send canonical server time for client clock-sync
+ws.send(JSON.stringify({ t: 'time', now: nowMs() }));
+
+// (optional) also send next burn if you maintain one; we’ll define it below
+if (typeof nextBurnAt === 'number') {
+  ws.send(JSON.stringify({ t: 'next_burn', at: new Date(nextBurnAt).toISOString(), now: nowMs() }));
+}
 
   ws.on('message', async (buf) => {
     let msg = {};
