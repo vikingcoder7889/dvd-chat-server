@@ -11,6 +11,25 @@ const CLAIM_DURATION_MS = 15 * 60 * 1000;           // 15 minutes
 const MIN_LAMPORTS     = Math.floor(0.01 * 1e9);    // 0.01 SOL
 const DEFAULT_OVERLAY_LOGO = '/dvd_logo-bouncing.png';
 const connection = new Connection(clusterApiUrl('mainnet-beta'), 'confirmed');
+// --- Chat history, clients, broadcast helpers ---
+const LOG_MAX = 300;          // keep the most recent ~300 lines
+let log = [];                 // [{type:'system'|'user', user?, text, ts}]
+const clients = new Map();    // ws -> { user, room, bucket }
+
+function pushLog(evt) {
+  log.push(evt);
+  if (log.length > LOG_MAX) log = log.slice(-LOG_MAX);
+}
+
+function broadcast(obj, room = 'global') {
+  const data = JSON.stringify(obj);
+  for (const [ws, meta] of clients.entries()) {
+    if (meta.room === room && ws.readyState === ws.OPEN) {
+      ws.send(data);
+    }
+  }
+}
+
 // --- canonical time & physics (global) ---
 const nowMs = () => Date.now();
 
@@ -25,13 +44,7 @@ const LOGO_H  = 180;
 // Initial speed in world units per second (tweak to taste)
 const SPEED   = 380;
 
-// Send an object to all connected clients in a room
-function broadcast(obj, room = 'global') {
-  const data = JSON.stringify(obj);
-  for (const [ws, meta] of clients.entries()) {
-    if (meta.room === room && ws.readyState === ws.OPEN) ws.send(data);
-  }
-}
+
 
 // One-client helper (used on connect)
 function sendCurrentLogo(ws) {
@@ -58,27 +71,7 @@ function sendCurrentLogo(ws) {
   } catch {}
 }
 
-// Everyone-helper: push the same current logo state to all clients
-function broadcastLogo(room = 'global') {
-  const startAt = nowMs();
-  const img = currentLogo.imageUrl || DEFAULT_OVERLAY_LOGO;
-  const seed = [...String(img)].reduce((a, c) => ((a << 5) - a + c.charCodeAt(0)) | 0, 0) >>> 0;
-  const ang  = (seed % 360) * Math.PI / 180;
-  const vx   = Math.cos(ang) * SPEED;
-  const vy   = Math.sin(ang) * SPEED;
 
-  const x0 = (WORLD_W - LOGO_W) / 2;
-  const y0 = (WORLD_H - LOGO_H) / 2;
-
-  broadcast({
-    t: 'logo_current',
-    imageUrl: currentLogo.imageUrl,
-    expiresAt: new Date(currentLogo.expiresAt).toISOString(),
-    setBy: currentLogo.setBy,
-    phys: { worldW: WORLD_W, worldH: WORLD_H, logoW: LOGO_W, logoH: LOGO_H, x0, y0, vx, vy, t0: startAt },
-    now: nowMs()
-  }, room);
-}
 
 // (Optional) If you also want to show the queue length in the UI
 function broadcastQueueSize(room = 'global') {
