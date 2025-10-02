@@ -44,6 +44,14 @@ const LOGO_H  = 180;
 // Initial speed in world units per second (tweak to taste)
 const SPEED   = 380;
 
+function broadcastLogo(room = 'global') {
+  broadcast({
+    t: 'logo_current',
+    imageUrl: currentLogo.imageUrl,
+    expiresAt: new Date(currentLogo.expiresAt).toISOString(),
+    setBy: currentLogo.setBy,
+  }, room);
+}
 
 
 // One-client helper (used on connect)
@@ -71,13 +79,11 @@ function sendCurrentLogo(ws) {
   } catch {}
 }
 
-
-
-// (Optional) If you also want to show the queue length in the UI
 function broadcastQueueSize(room = 'global') {
   const n = (active ? 1 : 0) + queue.length;
   broadcast({ t: 'logo_queue_size', n }, room);
 }
+
 
 
 // --- Simple moderation ---
@@ -130,35 +136,27 @@ let revertTimer = null;
 
 
 function startNext(room = 'global') {
-  clearTimeout(revertTimer);
-
+  // …
   if (!queue.length) {
     active = null;
     currentLogo = { imageUrl: DEFAULT_OVERLAY_LOGO, expiresAt: 0, setBy: 'system' };
-    broadcastLogo(room);
-    broadcastQueueSize(room);
+    broadcastLogo(room);          
+    broadcastQueueSize(room);     
     return;
   }
 
-  const item = queue.shift();
-  const now = Date.now();
-  active = {
-    ...item,
-    startedAt: now,
-    expiresAt: now + CLAIM_DURATION_MS,
-  };
-
+  // … after selecting the next item:
   currentLogo = {
     imageUrl: item.imageUrl,
     expiresAt: active.expiresAt,
     setBy: item.setBy,
   };
 
-  broadcastLogo(room);
-  broadcastQueueSize(room);
-
+  broadcastLogo(room);             
+  broadcastQueueSize(room);        
   revertTimer = setTimeout(() => startNext(room), CLAIM_DURATION_MS);
 }
+
 
 // --- HTTP (Express app + health) ---
 const app = express();
