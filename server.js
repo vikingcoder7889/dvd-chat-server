@@ -136,11 +136,6 @@ let revertTimer = null;
   }, room);
 
 
-function broadcastQueueSize(room = 'global') {
-  const n = (active ? 1 : 0) + queue.length;
-  broadcast({ t: 'logo_queue_size', n }, room);
-}
-
 function startNext(room = 'global') {
   clearTimeout(revertTimer);
 
