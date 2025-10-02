@@ -25,11 +25,7 @@ const LOGO_H  = 180;
 // Initial speed in world units per second (tweak to taste)
 const SPEED   = 380;
 
-// --- Chat history, clients, broadcast helpers ---
-const LOG_MAX = 300;
-let log = []; // [{type:'system'|'user', user?, text, ts}]
-const clients = new Map(); // ws -> {user, room, bucket}
-
+// Send an object to all connected clients in a room
 function broadcast(obj, room = 'global') {
   const data = JSON.stringify(obj);
   for (const [ws, meta] of clients.entries()) {
@@ -37,10 +33,59 @@ function broadcast(obj, room = 'global') {
   }
 }
 
-function pushLog(evt) {
-  log.push(evt);
-  if (log.length > LOG_MAX) log = log.slice(-LOG_MAX);
+// One-client helper (used on connect)
+function sendCurrentLogo(ws) {
+  try {
+    // derive deterministic physics for the current logo
+    const startAt = nowMs();
+    const img = currentLogo.imageUrl || DEFAULT_OVERLAY_LOGO;
+    const seed = [...String(img)].reduce((a, c) => ((a << 5) - a + c.charCodeAt(0)) | 0, 0) >>> 0;
+    const ang  = (seed % 360) * Math.PI / 180;
+    const vx   = Math.cos(ang) * SPEED;
+    const vy   = Math.sin(ang) * SPEED;
+
+    const x0 = (WORLD_W - LOGO_W) / 2;
+    const y0 = (WORLD_H - LOGO_H) / 2;
+
+    ws.send(JSON.stringify({
+      t: 'logo_current',
+      imageUrl: currentLogo.imageUrl,
+      expiresAt: new Date(currentLogo.expiresAt).toISOString(),
+      setBy: currentLogo.setBy,
+      phys: { worldW: WORLD_W, worldH: WORLD_H, logoW: LOGO_W, logoH: LOGO_H, x0, y0, vx, vy, t0: startAt },
+      now: nowMs()
+    }));
+  } catch {}
 }
+
+// Everyone-helper: push the same current logo state to all clients
+function broadcastLogo(room = 'global') {
+  const startAt = nowMs();
+  const img = currentLogo.imageUrl || DEFAULT_OVERLAY_LOGO;
+  const seed = [...String(img)].reduce((a, c) => ((a << 5) - a + c.charCodeAt(0)) | 0, 0) >>> 0;
+  const ang  = (seed % 360) * Math.PI / 180;
+  const vx   = Math.cos(ang) * SPEED;
+  const vy   = Math.sin(ang) * SPEED;
+
+  const x0 = (WORLD_W - LOGO_W) / 2;
+  const y0 = (WORLD_H - LOGO_H) / 2;
+
+  broadcast({
+    t: 'logo_current',
+    imageUrl: currentLogo.imageUrl,
+    expiresAt: new Date(currentLogo.expiresAt).toISOString(),
+    setBy: currentLogo.setBy,
+    phys: { worldW: WORLD_W, worldH: WORLD_H, logoW: LOGO_W, logoH: LOGO_H, x0, y0, vx, vy, t0: startAt },
+    now: nowMs()
+  }, room);
+}
+
+// (Optional) If you also want to show the queue length in the UI
+function broadcastQueueSize(room = 'global') {
+  const n = (active ? 1 : 0) + queue.length;
+  broadcast({ t: 'logo_queue_size', n }, room);
+}
+
 
 // --- Simple moderation ---
 const BAD_WORDS = [/fuck/i, /cunt/i, /nigg/i, /kike/i, /spic/i, /retard/i];
@@ -145,9 +190,11 @@ wss.on('connection', (ws) => {
   clients.set(ws, meta);
 
   ws.send(JSON.stringify({ t: 'welcome', log, users: clients.size }));
-  broadcastLogo(meta.room);        // NEW: send current logo state
+  sendCurrentLogo(ws);        // send the current logo state ONLY to the new client
   broadcastQueueSize(meta.room);   // NEW: send queue size
   broadcast({ t: 'count', n: clients.size });
+
+  ws.send(JSON.stringify({ t: 'logo_queue_size', n: (active ? 1 : 0) + queue.length }));
 
   // send canonical server time for client clock-sync
 ws.send(JSON.stringify({ t: 'time', now: nowMs() }));
