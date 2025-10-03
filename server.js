@@ -6,7 +6,7 @@ import { WebSocketServer } from 'ws';
 import { Connection, PublicKey, SystemProgram, Transaction, clusterApiUrl } from '@solana/web3.js';
 
 // --- Config (env + pricing/duration) ---
-const RECEIVER_PUBKEY = new PublicKey(process.env.RECEIVER_PUBKEY || "Bbe9EKuc2Yg72wzSGA2f2L62sK1rG1i1j9xL7t3w2WXt"); // Fallback for local dev
+const RECEIVER_PUBKEY = new PublicKey(process.env.RECEIVER_PUBKEY); // set in env (Render or local)
 const CLAIM_DURATION_MS = 15 * 60 * 1000;           // 15 minutes active duration
 const MIN_LAMPORTS     = Math.floor(0.01 * 1e9);    // 0.01 SOL
 const DEFAULT_OVERLAY_LOGO = '/dvd_logo-bouncing.png';
@@ -16,7 +16,7 @@ const connection = new Connection(clusterApiUrl('mainnet-beta'), 'confirmed');
 // --- Chat history, clients, broadcast helpers ---
 const LOG_MAX = 300;
 let log = [];                              // [{type:'system'|'user', user?, text, ts}]
-const clients = new Map();                 // ws -> { user, room, bucket, isObserver }
+const clients = new Map();                 // ws -> { user, room, bucket }
 
 function pushLog(evt) {
   log.push(evt);
@@ -44,8 +44,8 @@ const LOGO_H  = 180;
 // Speed in world units/sec
 const SPEED   = 380;
 
-// This is the canonical t=0 for the default logo's physics.
-const SERVER_T0 = nowMs();
+// Add this one line near the world constants:
+const SERVER_T0 = Date.now();
 
 // --- Logo queue (FIFO) state ---
 let currentLogo = { imageUrl: DEFAULT_OVERLAY_LOGO, expiresAt: 0, setBy: 'system' };
@@ -53,10 +53,10 @@ const queue = [];   // [{ imageUrl, setBy, tx }]
 let active = null;  // { imageUrl, setBy, tx, startedAt, expiresAt }
 let revertTimer = null;
 
-// The server now manages the single, synchronized "next burn" time.
-let nextBurnAt = nowMs() + 12 * 60 * 60 * 1000; // 12h from server start
+// Optional: persistent “next burn” target (adjust as you like)
+let nextBurnAt = Date.now() + 12 * 60 * 60 * 1000; // 12h from server start
 
-// Build deterministic physics from the image url and a start time.
+// Build physics (deterministic) from the current image url
 function physicsFor(imageUrl, t0 = SERVER_T0) {
   const seed = [...String(imageUrl || DEFAULT_OVERLAY_LOGO)]
     .reduce((a, c) => ((a << 5) - a + c.charCodeAt(0)) | 0, 0) >>> 0;
@@ -66,16 +66,16 @@ function physicsFor(imageUrl, t0 = SERVER_T0) {
   const x0  = (WORLD_W - LOGO_W) / 2;
   const y0  = (WORLD_H - LOGO_H) / 2;
   return { worldW: WORLD_W, worldH: WORLD_H, logoW: LOGO_W, logoH: LOGO_H, x0, y0, vx, vy, t0 };
+
 }
 
-// Broadcast current logo and its physics state to everyone in a room.
+// Broadcast current logo to everyone in a room
 function broadcastLogo(room = 'global') {
   broadcast({
     t: 'logo_current',
     imageUrl: currentLogo.imageUrl,
     expiresAt: new Date(currentLogo.expiresAt).toISOString(),
     setBy: currentLogo.setBy,
-    // The `phys` object is the single source of truth for animation.
     phys: physicsFor(currentLogo.imageUrl, active?.startedAt || SERVER_T0),
     now: nowMs()
   }, room);
@@ -85,6 +85,62 @@ function broadcastQueueSize(room = 'global') {
   const n = (active ? 1 : 0) + queue.length;
   broadcast({ t: 'logo_queue_size', n }, room);
 }
+
+// --- Telemetry helpers: reflect-with-bounce + live state ---
+function __reflect1D(p0, v, range, tSec) {
+  // position along one axis with ideal elastic bounces between 0..range
+  const span = range * 2;                     // out-and-back distance
+  const raw = p0 + v * tSec;                  // unbounded
+  const mod = ((raw % span) + span) % span;   // wrap to [0, 2*range)
+  const pos = mod <= range ? mod : (span - mod);
+  // velocity sign flips on the way back
+  const dir = mod <= range ? Math.sign(v) : -Math.sign(v);
+  const vel = Math.abs(v) * dir;
+  return { pos, vel };
+}
+
+function __logoStateAt(nowMs) {
+  const phys = physicsFor(currentLogo.imageUrl, active?.startedAt || SERVER_T0);
+  const rangeX = phys.worldW - phys.logoW;
+  const rangeY = phys.worldH - phys.logoH;
+  const tSec   = Math.max(0, (nowMs - phys.t0) / 1000);
+
+  const rx = __reflect1D(phys.x0, phys.vx, rangeX, tSec);
+  const ry = __reflect1D(phys.y0, phys.vy, rangeY, tSec);
+
+  const x  = Math.max(0, Math.min(rangeX, rx.pos));
+  const y  = Math.max(0, Math.min(rangeY, ry.pos));
+  const vx = rx.vel;
+  const vy = ry.vel;
+
+  // tag for “flavor” (approach / impact / corner)
+  const eps = 2;
+  const hitL = x <= eps, hitR = (rangeX - x) <= eps;
+  const hitT = y <= eps, hitB = (rangeY - y) <= eps;
+  let tag = 'glide';
+  if ((hitL || hitR) && (hitT || hitB)) {
+    tag = `corner ${hitT && hitL ? 'TL' : hitT && hitR ? 'TR' : hitB && hitL ? 'BL' : 'BR'}`;
+  } else if (hitL || hitR) {
+    tag = hitL ? 'impact L' : 'impact R';
+  } else if (hitT || hitB) {
+    tag = hitT ? 'impact T' : 'impact B';
+  } else {
+    const near = Math.min(x, rangeX - x, y, rangeY - y);
+    if (near < 40) tag = 'approach';
+  }
+
+  return { x, y, vx, vy, tag };
+}
+
+// --- Telemetry broadcaster (~12 Hz) ---
+let __lastTelemetrySend = 0;
+setInterval(() => {
+  const now = Date.now();
+  if (now - __lastTelemetrySend < 83) return; // ~12 Hz throttle
+  const st = __logoStateAt(now);
+  broadcast({ t: 'logo_state', ...st }, 'global');
+  __lastTelemetrySend = now;
+}, 16); // physics heartbeat (runs often; we self-throttle)
 
 function startNext(room = 'global') {
   clearTimeout(revertTimer);
@@ -98,7 +154,7 @@ function startNext(room = 'global') {
   }
 
   const item = queue.shift();
-  const startedAt = nowMs();
+  const startedAt = Date.now();
   active = {
     imageUrl: item.imageUrl,
     setBy: item.setBy,
@@ -148,48 +204,47 @@ app.post('/create-transfer', async (req, res) => {
 
 const server = http.createServer(app);
 
-// --- Unified WebSocket server ---
-const wss = new WebSocketServer({ noServer: true });
+// --- WebSocket server ---
+const wss = new WebSocketServer({ server, path: '/chat' });
 
-wss.on('connection', (ws, req) => {
-  // All clients start as observers and get the same initial state.
-  const meta = { user: 'anon', room: 'global', isObserver: true, bucket: { t0: nowMs(), n: 0 } };
+wss.on('connection', (ws) => {
+  const meta = { user: 'anon', room: 'global', bucket: { t0: Date.now(), n: 0 } };
   clients.set(ws, meta);
-  console.log(`[WSS] Client connected. Total clients: ${clients.size}`);
 
-  // Send initial state to the newly connected client to sync them up.
+  // Greet + log + users
+  ws.send(JSON.stringify({ t: 'welcome', log, users: clients.size }));
+
+  // Send canonical time and next burn to this client
   ws.send(JSON.stringify({ t: 'time', now: nowMs() }));
-  ws.send(JSON.stringify({ t: 'next_burn', at: new Date(nextBurnAt).toISOString() }));
-  ws.send(JSON.stringify({
+  if (typeof nextBurnAt === 'number') {
+    ws.send(JSON.stringify({ t: 'next_burn', at: new Date(nextBurnAt).toISOString(), now: nowMs() }));
+  }
+
+  // Send current logo state ONLY to this client (includes physics + now)
+  (function sendCurrentLogoToOne() {
+    const payload = {
       t: 'logo_current',
       imageUrl: currentLogo.imageUrl,
       expiresAt: new Date(currentLogo.expiresAt).toISOString(),
       setBy: currentLogo.setBy,
       phys: physicsFor(currentLogo.imageUrl, active?.startedAt || SERVER_T0),
       now: nowMs()
-  }));
+    };
+    ws.send(JSON.stringify(payload));
+  })();
 
-  // Broadcast the new total user count to everyone.
-  broadcast({ t: 'count', n: clients.size });
+  // Tell everyone queue size + user count
+  broadcastQueueSize(meta.room);
+  broadcast({ t: 'count', n: clients.size }, meta.room);
 
   ws.on('message', async (buf) => {
     let msg = {};
     try { msg = JSON.parse(buf.toString()); } catch { return; }
 
     if (msg.t === 'hello') {
-      // This client wants to chat. "Upgrade" them from an observer.
-      meta.isObserver = false;
       meta.user = String(msg.user || 'anon').slice(0, 24);
       meta.room = String(msg.room || 'global');
-      
-      // Now that they are a chat user, send them the chat history.
-      ws.send(JSON.stringify({ t: 'welcome', log, users: clients.size }));
       return;
-    }
-
-    // Only allow non-observers (chat users) to perform other actions.
-    if (meta.isObserver) {
-      return; 
     }
 
     // === PAY-TO-LOGO claim (verify on-chain, then enqueue) ===
@@ -223,6 +278,7 @@ wss.on('connection', (ws, req) => {
           return;
         }
 
+        // Look for transfer to RECEIVER_PUBKEY >= MIN_LAMPORTS
         const instr = parsed.transaction.message.instructions || [];
         let toReceiver = false; let paid = 0n;
         for (const ix of instr) {
@@ -237,17 +293,18 @@ wss.on('connection', (ws, req) => {
           return;
         }
 
+        // Enqueue
         const item = { imageUrl, setBy: meta.user || 'user', tx };
-        const wasIdle = !active && queue.length === 0;
+        const wasIdle = !active;
         queue.push(item);
 
         const pos = (active ? 1 : 0) + queue.length;
         ws.send(JSON.stringify({ t: 'logo_queue_pos', pos }));
 
-        broadcast({ t: 'system', text: `${item.setBy} joined the logo queue (#${pos}).`, ts: new Date().toISOString() });
-        broadcastQueueSize();
+        broadcast({ t: 'system', text: `${item.setBy} joined the logo queue (#${pos}).`, ts: new Date().toISOString() }, meta.room);
+        broadcastQueueSize(meta.room);
 
-        if (wasIdle) startNext();
+        if (wasIdle) startNext(meta.room);
       } catch (err) {
         console.error('logo_claim verify error', err);
         ws.send(JSON.stringify({ t: 'error', text: 'Verification error' }));
@@ -256,7 +313,7 @@ wss.on('connection', (ws, req) => {
     }
 
     // === Rate limit ONLY for chat messages ===
-    const b = meta.bucket; const t = nowMs();
+    const b = meta.bucket; const t = Date.now();
     if (t - b.t0 > 10_000) { b.t0 = t; b.n = 0; }
     if (++b.n > 10) { ws.send(JSON.stringify({ t: 'error', text: 'Rate limit exceeded' })); return; }
 
@@ -265,30 +322,16 @@ wss.on('connection', (ws, req) => {
         .replace(/fuck|cunt|nigg|kike|spic|retard/gi, '****');
       const evt = { type: 'user', user: meta.user, text, ts: msg.ts || new Date().toISOString() };
       pushLog(evt);
-      broadcast({ t: 'chat', user: evt.user, text: evt.text, ts: evt.ts });
+      broadcast({ t: 'chat', user: evt.user, text: evt.text, ts: evt.ts }, meta.room);
       return;
     }
   });
 
   ws.on('close', () => {
     clients.delete(ws);
-    console.log(`[WSS] Client disconnected. Total clients: ${clients.size}`);
-    broadcast({ t: 'count', n: clients.size });
-  });
-
-  ws.on('error', (err) => {
-      console.error('[WSS] WebSocket error:', err);
+    broadcast({ t: 'count', n: clients.size }, 'global');
   });
 });
-
-server.on('upgrade', (request, socket, head) => {
-    // Pass all websocket connections to the single wss handler.
-    wss.handleUpgrade(request, socket, head, (ws) => {
-        wss.emit('connection', ws, request);
-    });
-});
-
 
 const PORT = process.env.PORT || 8787;
-server.listen(PORT, () => console.log('HTTP and WebSocket server listening on :' + PORT));
-
+server.listen(PORT, () => console.log('chat ws listening on :' + PORT));
