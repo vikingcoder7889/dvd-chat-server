@@ -44,6 +44,9 @@ const LOGO_H  = 180;
 // Speed in world units/sec
 const SPEED   = 380;
 
+// Add this one line near the world constants:
+const SERVER_T0 = Date.now();
+
 // --- Logo queue (FIFO) state ---
 let currentLogo = { imageUrl: DEFAULT_OVERLAY_LOGO, expiresAt: 0, setBy: 'system' };
 const queue = [];   // [{ imageUrl, setBy, tx }]
@@ -54,7 +57,7 @@ let revertTimer = null;
 let nextBurnAt = Date.now() + 12 * 60 * 60 * 1000; // 12h from server start
 
 // Build physics (deterministic) from the current image url
-function physicsFor(imageUrl) {
+function physicsFor(imageUrl, t0 = SERVER_T0) {
   const seed = [...String(imageUrl || DEFAULT_OVERLAY_LOGO)]
     .reduce((a, c) => ((a << 5) - a + c.charCodeAt(0)) | 0, 0) >>> 0;
   const ang = (seed % 360) * Math.PI / 180;
@@ -62,7 +65,8 @@ function physicsFor(imageUrl) {
   const vy  = Math.sin(ang) * SPEED;
   const x0  = (WORLD_W - LOGO_W) / 2;
   const y0  = (WORLD_H - LOGO_H) / 2;
-  return { worldW: WORLD_W, worldH: WORLD_H, logoW: LOGO_W, logoH: LOGO_H, x0, y0, vx, vy, t0: nowMs() };
+  return { worldW: WORLD_W, worldH: WORLD_H, logoW: LOGO_W, logoH: LOGO_H, x0, y0, vx, vy, t0 };
+
 }
 
 // Broadcast current logo to everyone in a room
@@ -72,7 +76,7 @@ function broadcastLogo(room = 'global') {
     imageUrl: currentLogo.imageUrl,
     expiresAt: new Date(currentLogo.expiresAt).toISOString(),
     setBy: currentLogo.setBy,
-    phys: physicsFor(currentLogo.imageUrl),
+    phys: physicsFor(currentLogo.imageUrl, active?.startedAt || SERVER_T0),
     now: nowMs()
   }, room);
 }
@@ -167,7 +171,7 @@ wss.on('connection', (ws) => {
       imageUrl: currentLogo.imageUrl,
       expiresAt: new Date(currentLogo.expiresAt).toISOString(),
       setBy: currentLogo.setBy,
-      phys: physicsFor(currentLogo.imageUrl),
+      phys: physicsFor(currentLogo.imageUrl, active?.startedAt || SERVER_T0),
       now: nowMs()
     };
     ws.send(JSON.stringify(payload));
