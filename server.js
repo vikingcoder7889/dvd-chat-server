@@ -68,59 +68,6 @@ function physicsFor(imageUrl, t0 = SERVER_T0) {
   return { worldW: WORLD_W, worldH: WORLD_H, logoW: LOGO_W, logoH: LOGO_H, x0, y0, vx, vy, t0 };
 
 }
-// Send the current logo snapshot to both /chat and /observer clients
-function sendLogoSnapshot() {
-  const payload = {
-    t: 'logo_current',
-    imageUrl: currentLogo.imageUrl,
-    expiresAt: new Date(currentLogo.expiresAt).toISOString(),
-    setBy: currentLogo.setBy,
-    phys: physicsFor(currentLogo.imageUrl, active?.startedAt || SERVER_T0),
-    now: nowMs()
-  };
-  // keep existing behavior for chat UI
-  broadcast(payload, 'global');
-  // mirror to observers (agent log / timers)
-  broadcastObserver(payload);
-}
-
-function __reflect1D(p0, v, range, tSec) {
-  const span = range * 2;
-  const raw = p0 + v * tSec;
-  const mod = ((raw % span) + span) % span;
-  const pos = mod <= range ? mod : (span - mod);
-  const dir = mod <= range ? Math.sign(v) : -Math.sign(v);
-  const vel = Math.abs(v) * dir;
-  return { pos, vel };
-}
-
-function __logoStateAt(nowMs) {
-  const phys   = physicsFor(currentLogo.imageUrl, active?.startedAt || SERVER_T0);
-  const rangeX = phys.worldW - phys.logoW;
-  const rangeY = phys.worldH - phys.logoH;
-  const tSec   = Math.max(0, (nowMs - phys.t0) / 1000);
-
-  const rx = __reflect1D(phys.x0, phys.vx, rangeX, tSec);
-  const ry = __reflect1D(phys.y0, phys.vy, rangeY, tSec);
-
-  const x  = Math.max(0, Math.min(rangeX, rx.pos));
-  const y  = Math.max(0, Math.min(rangeY, ry.pos));
-  const vx = rx.vel;
-  const vy = ry.vel;
-
-  // tag (for Agent Log flavor)
-  const eps = 2;
-  const hitL = x <= eps, hitR = (rangeX - x) <= eps;
-  const hitT = y <= eps, hitB = (rangeY - y) <= eps;
-  let tag = 'glide';
-  if ((hitL || hitR) && (hitT || hitB))       tag = `corner ${hitT&&hitL?'TL':hitT&&hitR?'TR':hitB&&hitL?'BL':'BR'}`;
-  else if (hitL || hitR)                      tag = hitL ? 'impact L' : 'impact R';
-  else if (hitT || hitB)                      tag = hitT ? 'impact T' : 'impact B';
-  else if (Math.min(x, rangeX-x, y, rangeY-y) < 40) tag = 'approach';
-
-  return { x, y, vx, vy, tag };
-}
-
 
 // Broadcast current logo to everyone in a room
 function broadcastLogo(room = 'global') {
@@ -132,33 +79,12 @@ function broadcastLogo(room = 'global') {
     phys: physicsFor(currentLogo.imageUrl, active?.startedAt || SERVER_T0),
     now: nowMs()
   }, room);
-
-  if (typeof broadcastObserver === 'function') broadcastObserver({
-    t: 'logo_current',
-    imageUrl: currentLogo.imageUrl,
-    expiresAt: new Date(currentLogo.expiresAt).toISOString(),
-    setBy: currentLogo.setBy,
-    phys: physicsFor(currentLogo.imageUrl, active?.startedAt || SERVER_T0),
-    now: nowMs()
-  });
 }
 
 function broadcastQueueSize(room = 'global') {
   const n = (active ? 1 : 0) + queue.length;
   broadcast({ t: 'logo_queue_size', n }, room);
 }
-
-
-// --- Telemetry broadcaster (~12 Hz) via /observer ---
-let __lastTelemetrySend = 0;
-setInterval(() => {
-  const now = Date.now();
-  if (now - __lastTelemetrySend < 83) return; // ~12 Hz throttle
-  const st = __logoStateAt(now);
-  broadcastObserver({ t: 'logo_state', ...st });
-  __lastTelemetrySend = now;
-}, 16);
-
 
 function startNext(room = 'global') {
   clearTimeout(revertTimer);
@@ -224,51 +150,6 @@ const server = http.createServer(app);
 
 // --- WebSocket server ---
 const wss = new WebSocketServer({ server, path: '/chat' });
-
-// Dedicated observer socket for high-rate telemetry
-const wssObserver = new WebSocketServer({ server, path: '/observer' });
-
-function broadcastObserver(obj) {
-  const data = JSON.stringify(obj);
-  wssObserver.clients.forEach(ws => {
-    if (ws.readyState === ws.OPEN) ws.send(data);
-  });
-}
-
-wssObserver.on('connection', (ws) => {
-  // send canonical time and the next-burn clock to new observers
-  ws.send(JSON.stringify({ t: 'time', now: nowMs() }));
-  if (typeof nextBurnAt === 'number') {
-    ws.send(JSON.stringify({ t: 'next_burn', at: new Date(nextBurnAt).toISOString(), now: nowMs() }));
-  }
-  // also send the current logo snapshot (physics seed) once
-  ws.send(JSON.stringify({
-    t: 'logo_current',
-    imageUrl: currentLogo.imageUrl,
-    expiresAt: new Date(currentLogo.expiresAt).toISOString(),
-    setBy: currentLogo.setBy,
-    phys: physicsFor(currentLogo.imageUrl, active?.startedAt || SERVER_T0),
-    now: nowMs()
-  }));
-});
-
-
-wssObserver.on('connection', (ws) => {
-  // send canonical time and the next-burn clock to new observers
-  ws.send(JSON.stringify({ t: 'time', now: nowMs() }));
-  if (typeof nextBurnAt === 'number') {
-    ws.send(JSON.stringify({ t: 'next_burn', at: new Date(nextBurnAt).toISOString(), now: nowMs() }));
-  }
-  // also send the current logo snapshot (physics seed) once
-  ws.send(JSON.stringify({
-    t: 'logo_current',
-    imageUrl: currentLogo.imageUrl,
-    expiresAt: new Date(currentLogo.expiresAt).toISOString(),
-    setBy: currentLogo.setBy,
-    phys: physicsFor(currentLogo.imageUrl, active?.startedAt || SERVER_T0),
-    now: nowMs()
-  }));
-});
 
 wss.on('connection', (ws) => {
   const meta = { user: 'anon', room: 'global', bucket: { t0: Date.now(), n: 0 } };
@@ -397,20 +278,4 @@ wss.on('connection', (ws) => {
 });
 
 const PORT = process.env.PORT || 8787;
-
-// periodic time broadcast
-setInterval(() => {
-  const payload = { t: 'time', now: nowMs() };
-  try { broadcast(payload, 'global'); } catch {}
-  try { if (typeof broadcastObserver === 'function') broadcastObserver(payload); } catch {}
-}, 5000);
-
-// periodic next_burn broadcast
-setInterval(() => {
-  if (typeof nextBurnAt === 'number') {
-    const payload = { t: 'next_burn', at: new Date(nextBurnAt).toISOString(), now: nowMs() };
-    try { broadcast(payload, 'global'); } catch {}
-    try { if (typeof broadcastObserver === 'function') broadcastObserver(payload); } catch {}
-  }
-}, 15000);
 server.listen(PORT, () => console.log('chat ws listening on :' + PORT));
