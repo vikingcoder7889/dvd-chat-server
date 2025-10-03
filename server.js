@@ -16,7 +16,7 @@ const connection = new Connection(clusterApiUrl('mainnet-beta'), 'confirmed');
 // --- Chat history, clients, broadcast helpers ---
 const LOG_MAX = 300;
 let log = [];                              // [{type:'system'|'user', user?, text, ts}]
-const clients = new Map();                 // ws -> { user, room, bucket }
+const clients = new Map();                 // ws -> { user, room, bucket, isObserver }
 
 function pushLog(evt) {
   log.push(evt);
@@ -148,23 +148,18 @@ app.post('/create-transfer', async (req, res) => {
 
 const server = http.createServer(app);
 
-// --- WebSocket server ---
-const wss = new WebSocketServer({ server, path: '/chat' });
+// --- Unified WebSocket server ---
+const wss = new WebSocketServer({ noServer: true });
 
-wss.on('connection', (ws) => {
-  const meta = { user: 'anon', room: 'global', bucket: { t0: nowMs(), n: 0 } };
+wss.on('connection', (ws, req) => {
+  // All clients start as observers and get the same initial state.
+  const meta = { user: 'anon', room: 'global', isObserver: true, bucket: { t0: nowMs(), n: 0 } };
   clients.set(ws, meta);
+  console.log(`[WSS] Client connected. Total clients: ${clients.size}`);
 
-  // Greet + log + users
-  ws.send(JSON.stringify({ t: 'welcome', log, users: clients.size }));
-
-  // Send canonical server time so client can calculate skew.
+  // Send initial state to the newly connected client to sync them up.
   ws.send(JSON.stringify({ t: 'time', now: nowMs() }));
-  
-  // Send the synchronized burn time.
   ws.send(JSON.stringify({ t: 'next_burn', at: new Date(nextBurnAt).toISOString() }));
-
-  // Send current logo state ONLY to this new client.
   ws.send(JSON.stringify({
       t: 'logo_current',
       imageUrl: currentLogo.imageUrl,
@@ -174,20 +169,27 @@ wss.on('connection', (ws) => {
       now: nowMs()
   }));
 
-  // Tell everyone queue size + user count
-  broadcastQueueSize(meta.room);
-  broadcast({ t: 'count', n: clients.size }, meta.room);
+  // Broadcast the new total user count to everyone.
+  broadcast({ t: 'count', n: clients.size });
 
   ws.on('message', async (buf) => {
     let msg = {};
     try { msg = JSON.parse(buf.toString()); } catch { return; }
 
     if (msg.t === 'hello') {
+      // This client wants to chat. "Upgrade" them from an observer.
+      meta.isObserver = false;
       meta.user = String(msg.user || 'anon').slice(0, 24);
       meta.room = String(msg.room || 'global');
-      // A non-chat user is just an observer, connect them without joining chat.
-      // They will now receive sync messages.
+      
+      // Now that they are a chat user, send them the chat history.
+      ws.send(JSON.stringify({ t: 'welcome', log, users: clients.size }));
       return;
+    }
+
+    // Only allow non-observers (chat users) to perform other actions.
+    if (meta.isObserver) {
+      return; 
     }
 
     // === PAY-TO-LOGO claim (verify on-chain, then enqueue) ===
@@ -242,10 +244,10 @@ wss.on('connection', (ws) => {
         const pos = (active ? 1 : 0) + queue.length;
         ws.send(JSON.stringify({ t: 'logo_queue_pos', pos }));
 
-        broadcast({ t: 'system', text: `${item.setBy} joined the logo queue (#${pos}).`, ts: new Date().toISOString() }, meta.room);
-        broadcastQueueSize(meta.room);
+        broadcast({ t: 'system', text: `${item.setBy} joined the logo queue (#${pos}).`, ts: new Date().toISOString() });
+        broadcastQueueSize();
 
-        if (wasIdle) startNext(meta.room);
+        if (wasIdle) startNext();
       } catch (err) {
         console.error('logo_claim verify error', err);
         ws.send(JSON.stringify({ t: 'error', text: 'Verification error' }));
@@ -263,55 +265,30 @@ wss.on('connection', (ws) => {
         .replace(/fuck|cunt|nigg|kike|spic|retard/gi, '****');
       const evt = { type: 'user', user: meta.user, text, ts: msg.ts || new Date().toISOString() };
       pushLog(evt);
-      broadcast({ t: 'chat', user: evt.user, text: evt.text, ts: evt.ts }, meta.room);
+      broadcast({ t: 'chat', user: evt.user, text: evt.text, ts: evt.ts });
       return;
     }
   });
 
   ws.on('close', () => {
     clients.delete(ws);
-    broadcast({ t: 'count', n: clients.size }, 'global');
+    console.log(`[WSS] Client disconnected. Total clients: ${clients.size}`);
+    broadcast({ t: 'count', n: clients.size });
+  });
+
+  ws.on('error', (err) => {
+      console.error('[WSS] WebSocket error:', err);
   });
 });
 
-// A separate, simple WebSocket server for observers.
-const observerWss = new WebSocketServer({ noServer: true });
-observerWss.on('connection', (ws) => {
-    // Send initial state immediately.
-    ws.send(JSON.stringify({ t: 'time', now: nowMs() }));
-    ws.send(JSON.stringify({ t: 'next_burn', at: new Date(nextBurnAt).toISOString() }));
-    ws.send(JSON.stringify({
-        t: 'logo_current',
-        imageUrl: currentLogo.imageUrl,
-        phys: physicsFor(currentLogo.imageUrl, active?.startedAt || SERVER_T0),
-        now: nowMs()
-    }));
-    
-    // Add to a special 'observers' list to receive broadcasts
-    const meta = { room: 'global', isObserver: true };
-    clients.set(ws, meta);
-
-    ws.on('close', () => {
-        clients.delete(ws);
-    });
-});
-
-
 server.on('upgrade', (request, socket, head) => {
-    const { pathname } = new URL(request.url, `http://${request.headers.host}`);
-    if (pathname === '/chat') {
-        wss.handleUpgrade(request, socket, head, (ws) => {
-            wss.emit('connection', ws, request);
-        });
-    } else if (pathname === '/observer') {
-        observerWss.handleUpgrade(request, socket, head, (ws) => {
-            observerWss.emit('connection', ws, request);
-        });
-    } else {
-        socket.destroy();
-    }
+    // Pass all websocket connections to the single wss handler.
+    wss.handleUpgrade(request, socket, head, (ws) => {
+        wss.emit('connection', ws, request);
+    });
 });
 
 
 const PORT = process.env.PORT || 8787;
 server.listen(PORT, () => console.log('HTTP and WebSocket server listening on :' + PORT));
+
