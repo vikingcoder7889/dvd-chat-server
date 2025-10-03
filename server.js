@@ -6,7 +6,7 @@ import { WebSocketServer } from 'ws';
 import { Connection, PublicKey, SystemProgram, Transaction, clusterApiUrl } from '@solana/web3.js';
 
 // --- Config (env + pricing/duration) ---
-const RECEIVER_PUBKEY = new PublicKey(process.env.RECEIVER_PUBKEY); // set in env (Render or local)
+const RECEIVER_PUBKEY = new PublicKey(process.env.RECEIVER_PUBKEY || "Bbe9EKuc2Yg72wzSGA2f2L62sK1rG1i1j9xL7t3w2WXt"); // Fallback for local dev
 const CLAIM_DURATION_MS = 15 * 60 * 1000;           // 15 minutes active duration
 const MIN_LAMPORTS     = Math.floor(0.01 * 1e9);    // 0.01 SOL
 const DEFAULT_OVERLAY_LOGO = '/dvd_logo-bouncing.png';
@@ -44,8 +44,8 @@ const LOGO_H  = 180;
 // Speed in world units/sec
 const SPEED   = 380;
 
-// Add this one line near the world constants:
-const SERVER_T0 = Date.now();
+// This is the canonical t=0 for the default logo's physics.
+const SERVER_T0 = nowMs();
 
 // --- Logo queue (FIFO) state ---
 let currentLogo = { imageUrl: DEFAULT_OVERLAY_LOGO, expiresAt: 0, setBy: 'system' };
@@ -53,10 +53,10 @@ const queue = [];   // [{ imageUrl, setBy, tx }]
 let active = null;  // { imageUrl, setBy, tx, startedAt, expiresAt }
 let revertTimer = null;
 
-// Optional: persistent “next burn” target (adjust as you like)
-let nextBurnAt = Date.now() + 12 * 60 * 60 * 1000; // 12h from server start
+// The server now manages the single, synchronized "next burn" time.
+let nextBurnAt = nowMs() + 12 * 60 * 60 * 1000; // 12h from server start
 
-// Build physics (deterministic) from the current image url
+// Build deterministic physics from the image url and a start time.
 function physicsFor(imageUrl, t0 = SERVER_T0) {
   const seed = [...String(imageUrl || DEFAULT_OVERLAY_LOGO)]
     .reduce((a, c) => ((a << 5) - a + c.charCodeAt(0)) | 0, 0) >>> 0;
@@ -66,16 +66,16 @@ function physicsFor(imageUrl, t0 = SERVER_T0) {
   const x0  = (WORLD_W - LOGO_W) / 2;
   const y0  = (WORLD_H - LOGO_H) / 2;
   return { worldW: WORLD_W, worldH: WORLD_H, logoW: LOGO_W, logoH: LOGO_H, x0, y0, vx, vy, t0 };
-
 }
 
-// Broadcast current logo to everyone in a room
+// Broadcast current logo and its physics state to everyone in a room.
 function broadcastLogo(room = 'global') {
   broadcast({
     t: 'logo_current',
     imageUrl: currentLogo.imageUrl,
     expiresAt: new Date(currentLogo.expiresAt).toISOString(),
     setBy: currentLogo.setBy,
+    // The `phys` object is the single source of truth for animation.
     phys: physicsFor(currentLogo.imageUrl, active?.startedAt || SERVER_T0),
     now: nowMs()
   }, room);
@@ -98,7 +98,7 @@ function startNext(room = 'global') {
   }
 
   const item = queue.shift();
-  const startedAt = Date.now();
+  const startedAt = nowMs();
   active = {
     imageUrl: item.imageUrl,
     setBy: item.setBy,
@@ -152,30 +152,27 @@ const server = http.createServer(app);
 const wss = new WebSocketServer({ server, path: '/chat' });
 
 wss.on('connection', (ws) => {
-  const meta = { user: 'anon', room: 'global', bucket: { t0: Date.now(), n: 0 } };
+  const meta = { user: 'anon', room: 'global', bucket: { t0: nowMs(), n: 0 } };
   clients.set(ws, meta);
 
   // Greet + log + users
   ws.send(JSON.stringify({ t: 'welcome', log, users: clients.size }));
 
-  // Send canonical time and next burn to this client
+  // Send canonical server time so client can calculate skew.
   ws.send(JSON.stringify({ t: 'time', now: nowMs() }));
-  if (typeof nextBurnAt === 'number') {
-    ws.send(JSON.stringify({ t: 'next_burn', at: new Date(nextBurnAt).toISOString(), now: nowMs() }));
-  }
+  
+  // Send the synchronized burn time.
+  ws.send(JSON.stringify({ t: 'next_burn', at: new Date(nextBurnAt).toISOString() }));
 
-  // Send current logo state ONLY to this client (includes physics + now)
-  (function sendCurrentLogoToOne() {
-    const payload = {
+  // Send current logo state ONLY to this new client.
+  ws.send(JSON.stringify({
       t: 'logo_current',
       imageUrl: currentLogo.imageUrl,
       expiresAt: new Date(currentLogo.expiresAt).toISOString(),
       setBy: currentLogo.setBy,
       phys: physicsFor(currentLogo.imageUrl, active?.startedAt || SERVER_T0),
       now: nowMs()
-    };
-    ws.send(JSON.stringify(payload));
-  })();
+  }));
 
   // Tell everyone queue size + user count
   broadcastQueueSize(meta.room);
@@ -188,6 +185,8 @@ wss.on('connection', (ws) => {
     if (msg.t === 'hello') {
       meta.user = String(msg.user || 'anon').slice(0, 24);
       meta.room = String(msg.room || 'global');
+      // A non-chat user is just an observer, connect them without joining chat.
+      // They will now receive sync messages.
       return;
     }
 
@@ -222,7 +221,6 @@ wss.on('connection', (ws) => {
           return;
         }
 
-        // Look for transfer to RECEIVER_PUBKEY >= MIN_LAMPORTS
         const instr = parsed.transaction.message.instructions || [];
         let toReceiver = false; let paid = 0n;
         for (const ix of instr) {
@@ -237,9 +235,8 @@ wss.on('connection', (ws) => {
           return;
         }
 
-        // Enqueue
         const item = { imageUrl, setBy: meta.user || 'user', tx };
-        const wasIdle = !active;
+        const wasIdle = !active && queue.length === 0;
         queue.push(item);
 
         const pos = (active ? 1 : 0) + queue.length;
@@ -257,7 +254,7 @@ wss.on('connection', (ws) => {
     }
 
     // === Rate limit ONLY for chat messages ===
-    const b = meta.bucket; const t = Date.now();
+    const b = meta.bucket; const t = nowMs();
     if (t - b.t0 > 10_000) { b.t0 = t; b.n = 0; }
     if (++b.n > 10) { ws.send(JSON.stringify({ t: 'error', text: 'Rate limit exceeded' })); return; }
 
@@ -277,5 +274,44 @@ wss.on('connection', (ws) => {
   });
 });
 
+// A separate, simple WebSocket server for observers.
+const observerWss = new WebSocketServer({ noServer: true });
+observerWss.on('connection', (ws) => {
+    // Send initial state immediately.
+    ws.send(JSON.stringify({ t: 'time', now: nowMs() }));
+    ws.send(JSON.stringify({ t: 'next_burn', at: new Date(nextBurnAt).toISOString() }));
+    ws.send(JSON.stringify({
+        t: 'logo_current',
+        imageUrl: currentLogo.imageUrl,
+        phys: physicsFor(currentLogo.imageUrl, active?.startedAt || SERVER_T0),
+        now: nowMs()
+    }));
+    
+    // Add to a special 'observers' list to receive broadcasts
+    const meta = { room: 'global', isObserver: true };
+    clients.set(ws, meta);
+
+    ws.on('close', () => {
+        clients.delete(ws);
+    });
+});
+
+
+server.on('upgrade', (request, socket, head) => {
+    const { pathname } = new URL(request.url, `http://${request.headers.host}`);
+    if (pathname === '/chat') {
+        wss.handleUpgrade(request, socket, head, (ws) => {
+            wss.emit('connection', ws, request);
+        });
+    } else if (pathname === '/observer') {
+        observerWss.handleUpgrade(request, socket, head, (ws) => {
+            observerWss.emit('connection', ws, request);
+        });
+    } else {
+        socket.destroy();
+    }
+});
+
+
 const PORT = process.env.PORT || 8787;
-server.listen(PORT, () => console.log('chat ws listening on :' + PORT));
+server.listen(PORT, () => console.log('HTTP and WebSocket server listening on :' + PORT));
