@@ -132,7 +132,15 @@ function broadcastLogo(room = 'global') {
     phys: physicsFor(currentLogo.imageUrl, active?.startedAt || SERVER_T0),
     now: nowMs()
   }, room);
-  broadcastObserver(payload);
+
+  if (typeof broadcastObserver === 'function') broadcastObserver({
+    t: 'logo_current',
+    imageUrl: currentLogo.imageUrl,
+    expiresAt: new Date(currentLogo.expiresAt).toISOString(),
+    setBy: currentLogo.setBy,
+    phys: physicsFor(currentLogo.imageUrl, active?.startedAt || SERVER_T0),
+    now: nowMs()
+  });
 }
 
 function broadcastQueueSize(room = 'global') {
@@ -245,7 +253,22 @@ wssObserver.on('connection', (ws) => {
 });
 
 
-
+wssObserver.on('connection', (ws) => {
+  // send canonical time and the next-burn clock to new observers
+  ws.send(JSON.stringify({ t: 'time', now: nowMs() }));
+  if (typeof nextBurnAt === 'number') {
+    ws.send(JSON.stringify({ t: 'next_burn', at: new Date(nextBurnAt).toISOString(), now: nowMs() }));
+  }
+  // also send the current logo snapshot (physics seed) once
+  ws.send(JSON.stringify({
+    t: 'logo_current',
+    imageUrl: currentLogo.imageUrl,
+    expiresAt: new Date(currentLogo.expiresAt).toISOString(),
+    setBy: currentLogo.setBy,
+    phys: physicsFor(currentLogo.imageUrl, active?.startedAt || SERVER_T0),
+    now: nowMs()
+  }));
+});
 
 wss.on('connection', (ws) => {
   const meta = { user: 'anon', room: 'global', bucket: { t0: Date.now(), n: 0 } };
@@ -374,4 +397,20 @@ wss.on('connection', (ws) => {
 });
 
 const PORT = process.env.PORT || 8787;
+
+// periodic time broadcast
+setInterval(() => {
+  const payload = { t: 'time', now: nowMs() };
+  try { broadcast(payload, 'global'); } catch {}
+  try { if (typeof broadcastObserver === 'function') broadcastObserver(payload); } catch {}
+}, 5000);
+
+// periodic next_burn broadcast
+setInterval(() => {
+  if (typeof nextBurnAt === 'number') {
+    const payload = { t: 'next_burn', at: new Date(nextBurnAt).toISOString(), now: nowMs() };
+    try { broadcast(payload, 'global'); } catch {}
+    try { if (typeof broadcastObserver === 'function') broadcastObserver(payload); } catch {}
+  }
+}, 15000);
 server.listen(PORT, () => console.log('chat ws listening on :' + PORT));
