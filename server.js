@@ -69,6 +69,60 @@ function physicsFor(imageUrl, t0 = SERVER_T0) {
 
 }
 
+function __reflect1D(p0, v, range, tSec) {
+  const span = range * 2;
+  const raw = p0 + v * tSec;
+  const mod = ((raw % span) + span) % span;
+  const pos = mod <= range ? mod : (span - mod);
+  const dir = mod <= range ? Math.sign(v) : -Math.sign(v);
+  const vel = Math.abs(v) * dir;
+  return { pos, vel };
+}
+
+function __logoStateAt(nowMs) {
+  const phys   = physicsFor(currentLogo.imageUrl, active?.startedAt || SERVER_T0);
+  const rangeX = phys.worldW - phys.logoW;
+  const rangeY = phys.worldH - phys.logoH;
+  const tSec   = Math.max(0, (nowMs - phys.t0) / 1000);
+
+  const rx = __reflect1D(phys.x0, phys.vx, rangeX, tSec);
+  const ry = __reflect1D(phys.y0, phys.vy, rangeY, tSec);
+
+  const x  = Math.max(0, Math.min(rangeX, rx.pos));
+  const y  = Math.max(0, Math.min(rangeY, ry.pos));
+  const vx = rx.vel;
+  const vy = ry.vel;
+
+  const eps = 2;
+  const hitL = x <= eps, hitR = (rangeX - x) <= eps;
+  const hitT = y <= eps, hitB = (rangeY - y) <= eps;
+  let tag = 'glide';
+  if ((hitL || hitR) && (hitT || hitB))       tag = `corner ${hitT&&hitL?'TL':hitT&&hitR?'TR':hitB&&hitL?'BL':'BR'}`;
+  else if (hitL || hitR)                      tag = hitL ? 'impact L' : 'impact R';
+  else if (hitT || hitB)                      tag = hitT ? 'impact T' : 'impact B';
+  else if (Math.min(x, rangeX-x, y, rangeY-y) < 40) tag = 'approach';
+
+  return { x, y, vx, vy, tag };
+}
+
+// Send the current logo snapshot to both /chat and /observer clients
+function sendLogoSnapshot() {
+  const payload = {
+    t: 'logo_current',
+    imageUrl: currentLogo.imageUrl,
+    expiresAt: new Date(currentLogo.expiresAt).toISOString(),
+    setBy: currentLogo.setBy,
+    phys: physicsFor(currentLogo.imageUrl, active?.startedAt || SERVER_T0),
+    now: nowMs()
+  };
+  // broadcast to chat (existing behavior)
+  broadcast(payload, 'global');
+  // mirror to observers
+  if (typeof broadcastObserver === 'function') {
+    broadcastObserver(payload);
+  }
+}
+
 // Broadcast current logo to everyone in a room
 function broadcastLogo(room = 'global') {
   broadcast({
@@ -86,51 +140,6 @@ function broadcastQueueSize(room = 'global') {
   broadcast({ t: 'logo_queue_size', n }, room);
 }
 
-// --- Telemetry helpers: reflect-with-bounce + live state ---
-function __reflect1D(p0, v, range, tSec) {
-  // position along one axis with ideal elastic bounces between 0..range
-  const span = range * 2;                     // out-and-back distance
-  const raw = p0 + v * tSec;                  // unbounded
-  const mod = ((raw % span) + span) % span;   // wrap to [0, 2*range)
-  const pos = mod <= range ? mod : (span - mod);
-  // velocity sign flips on the way back
-  const dir = mod <= range ? Math.sign(v) : -Math.sign(v);
-  const vel = Math.abs(v) * dir;
-  return { pos, vel };
-}
-
-function __logoStateAt(nowMs) {
-  const phys = physicsFor(currentLogo.imageUrl, active?.startedAt || SERVER_T0);
-  const rangeX = phys.worldW - phys.logoW;
-  const rangeY = phys.worldH - phys.logoH;
-  const tSec   = Math.max(0, (nowMs - phys.t0) / 1000);
-
-  const rx = __reflect1D(phys.x0, phys.vx, rangeX, tSec);
-  const ry = __reflect1D(phys.y0, phys.vy, rangeY, tSec);
-
-  const x  = Math.max(0, Math.min(rangeX, rx.pos));
-  const y  = Math.max(0, Math.min(rangeY, ry.pos));
-  const vx = rx.vel;
-  const vy = ry.vel;
-
-  // tag for “flavor” (approach / impact / corner)
-  const eps = 2;
-  const hitL = x <= eps, hitR = (rangeX - x) <= eps;
-  const hitT = y <= eps, hitB = (rangeY - y) <= eps;
-  let tag = 'glide';
-  if ((hitL || hitR) && (hitT || hitB)) {
-    tag = `corner ${hitT && hitL ? 'TL' : hitT && hitR ? 'TR' : hitB && hitL ? 'BL' : 'BR'}`;
-  } else if (hitL || hitR) {
-    tag = hitL ? 'impact L' : 'impact R';
-  } else if (hitT || hitB) {
-    tag = hitT ? 'impact T' : 'impact B';
-  } else {
-    const near = Math.min(x, rangeX - x, y, rangeY - y);
-    if (near < 40) tag = 'approach';
-  }
-
-  return { x, y, vx, vy, tag };
-}
 
 // --- Telemetry broadcaster (~12 Hz) ---
 let __lastTelemetrySend = 0;
@@ -206,6 +215,33 @@ const server = http.createServer(app);
 
 // --- WebSocket server ---
 const wss = new WebSocketServer({ server, path: '/chat' });
+
+// Dedicated observer socket for high-rate telemetry
+const wssObserver = new WebSocketServer({ server, path: '/observer' });
+
+function broadcastObserver(obj) {
+  const data = JSON.stringify(obj);
+  wssObserver.clients.forEach(ws => {
+    if (ws.readyState === ws.OPEN) ws.send(data);
+  });
+}
+
+wssObserver.on('connection', (ws) => {
+  // send canonical time and the next-burn clock to new observers
+  ws.send(JSON.stringify({ t: 'time', now: nowMs() }));
+  if (typeof nextBurnAt === 'number') {
+    ws.send(JSON.stringify({ t: 'next_burn', at: new Date(nextBurnAt).toISOString(), now: nowMs() }));
+  }
+  // also send the current logo snapshot (physics seed) once
+  ws.send(JSON.stringify({
+    t: 'logo_current',
+    imageUrl: currentLogo.imageUrl,
+    expiresAt: new Date(currentLogo.expiresAt).toISOString(),
+    setBy: currentLogo.setBy,
+    phys: physicsFor(currentLogo.imageUrl, active?.startedAt || SERVER_T0),
+    now: nowMs()
+  }));
+});
 
 wss.on('connection', (ws) => {
   const meta = { user: 'anon', room: 'global', bucket: { t0: Date.now(), n: 0 } };
@@ -335,3 +371,22 @@ wss.on('connection', (ws) => {
 
 const PORT = process.env.PORT || 8787;
 server.listen(PORT, () => console.log('chat ws listening on :' + PORT));
+
+
+// Periodic snapshot refresh (every 30s) to keep late joiners synced
+setInterval(() => {
+  try { sendLogoSnapshot(); } catch {}
+}, 30000);
+
+
+// --- Telemetry broadcaster (~12 Hz) via /observer ---
+let __lastTelemetrySend = 0;
+setInterval(() => {
+  const now = Date.now();
+  if (now - __lastTelemetrySend < 83) return; // ~12 Hz throttle
+  if (typeof __logoStateAt === 'function' && typeof broadcastObserver === 'function') {
+    const st = __logoStateAt(now);
+    broadcastObserver({ t: 'logo_state', ...st });
+    __lastTelemetrySend = now;
+  }
+}, 16);
