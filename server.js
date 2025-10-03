@@ -341,3 +341,4 @@ server.listen(PORT, () => {
   console.log(`[dvd-chat-server] chat WS:      ws://localhost:${PORT}/chat`);
   console.log(`[dvd-chat-server] observer WS:  ws://localhost:${PORT}/observer`);
 });
+
