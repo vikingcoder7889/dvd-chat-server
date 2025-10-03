@@ -78,9 +78,7 @@ function broadcastLogo(room = 'global') {
     setBy: currentLogo.setBy,
     phys: physicsFor(currentLogo.imageUrl, active?.startedAt || SERVER_T0),
     now: nowMs()
-  };
-  broadcast(__payload, room);
-  try { sendObserver(__payload); } catch {}
+  } // __sendObserver__hook, room);
 }
 
 function broadcastQueueSize(room = 'global') {
@@ -153,30 +151,33 @@ const server = http.createServer(app);
 // --- WebSocket server ---
 const wss = new WebSocketServer({ server, path: '/chat' });
 
+// Observer WS: read-only stream for physics/time/burn schedule
 const wssObserver = new WebSocketServer({ server, path: '/observer' });
-const observerClients = new Set();
-function sendObserver(obj){ const data = JSON.stringify(obj); for (const ws of observerClients){ try{ ws.send(data); }catch{} } }
-
+const __observers = new Set();
+function __sendObserver(obj){
+  const data = JSON.stringify(obj);
+  for (const ws of __observers){ try { ws.send(data); } catch {} }
+}
 wssObserver.on('connection', (ws) => {
-  observerClients.add(ws);
-  ws.send(JSON.stringify({ t: 'time', now: nowMs() }));
+  __observers.add(ws);
+  ws.send(JSON.stringify({ t:'time', now: nowMs() }));
   if (typeof nextBurnAt === 'number') {
-    ws.send(JSON.stringify({ t: 'next_burn', at: new Date(nextBurnAt).toISOString(), now: nowMs() }));
+    ws.send(JSON.stringify({ t:'next_burn', at: new Date(nextBurnAt).toISOString(), now: nowMs() }));
   }
-  const payload = {
-    t: 'logo_current',
-    imageUrl: currentLogo.imageUrl,
-    expiresAt: new Date(currentLogo.expiresAt).toISOString(),
-    setBy: currentLogo.setBy,
-    phys: physicsFor(currentLogo.imageUrl, active?.startedAt || SERVER_T0),
-    now: nowMs()
-  };
-  ws.send(JSON.stringify(payload));
-  ws.on('close', () => { observerClients.delete(ws); });
-  ws.on('error', () => { try{ ws.close(); }catch{} observerClients.delete(ws); });
+  try {
+    ws.send(JSON.stringify({
+      t:'logo_current',
+      imageUrl: currentLogo.imageUrl,
+      expiresAt: new Date(currentLogo.expiresAt).toISOString(),
+      setBy: currentLogo.setBy,
+      phys: physicsFor(currentLogo.imageUrl, active?.startedAt || SERVER_T0),
+      now: nowMs()
+    }));
+  } catch {}
+  ws.on('close', () => __observers.delete(ws));
+  ws.on('error', () => { try{ws.close()}catch{} __observers.delete(ws)});
 });
-
-setInterval(() => { sendObserver({ t: 'time', now: nowMs() }); }, 2000);
+setInterval(() => __sendObserver({ t:'time', now: nowMs() }), 2000);
 
 
 wss.on('connection', (ws) => {
