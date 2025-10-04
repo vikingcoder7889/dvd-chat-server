@@ -89,7 +89,7 @@ const nowMs = () => Date.now();
 // Function to fetch recent transactions for the dev wallet
 async function fetchDevWalletTransactions() {
     try {
-        const signatures = await SOLANA_CONNECTION.getConfirmedSignaturesForAddress2(
+        const signatures = await SOLANA_CONNECTION.getSignaturesForAddress(
             DEV_WALLET_PUBLIC_KEY,
             { limit: 10 } // Fetch last 10 transactions
         );
@@ -104,6 +104,21 @@ async function fetchDevWalletTransactions() {
                 let type = 'Unknown';
                 let amount = 'N/A';
                 
+                transactions.push({
+                    time: blockTime,
+                    type: type,
+                    amount: amount,
+                    signature: sigInfo.signature,
+                    slot: sigInfo.slot
+                });
+            }
+        }
+        return transactions;
+    } catch (error) {
+        console.error("Error fetching dev wallet transactions:", error);
+        return [];
+    }
+}
                 // Basic check for transfers, more complex parsing for token burns might be needed
                 // For a burn, you'd look for an instruction from the burn program
                 // For simple SOL transfers, you'd look at pre/post balances
@@ -122,26 +137,8 @@ async function fetchDevWalletTransactions() {
                         amount = `${Math.abs(balanceChange).toFixed(4)} SOL`;
                     }
                 }
+              
                 
-                // You'd add more specific logic here to detect your meme coin's burns
-                // For a specific token, you'd look into tx.meta.tokenBalances or tx.transaction.message.instructions
-                // For instance, if a burn happens, there will be an instruction in the transaction that details it.
-
-                transactions.push({
-                    time: blockTime,
-                    type: type, // Placeholder, will refine below
-                    amount: amount, // Placeholder
-                    signature: sigInfo.signature,
-                    slot: sigInfo.slot
-                });
-            }
-        }
-        return transactions;
-    } catch (error) {
-        console.error("Error fetching dev wallet transactions:", error);
-        return [];
-    }
-}
 // =================================================================
 // 4. DETERMINISTIC PHYSICS ENGINE
 // =================================================================
