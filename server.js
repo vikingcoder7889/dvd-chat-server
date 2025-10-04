@@ -32,7 +32,27 @@ let currentLogo = { imageUrl: DEFAULT_OVERLAY_LOGO, expiresAt: 0, setBy: 'system
 const queue = [];                           // FIFO queue: [{ imageUrl, setBy, tx }]
 let active = null;                          // Currently active logo: { imageUrl, setBy, tx, startedAt, expiresAt }
 let revertTimer = null;
-let nextBurnAt = Date.now() + 12 * 60 * 60 * 1000; // Example burn timer: 12h from server start
+let nextBurnAt = 0; // Will be set by our new function
+
+/** Schedules the next burn and broadcasts it, then reschedules itself. */
+function scheduleNextBurn() {
+  const TWELVE_HOURS_MS = 12 * 60 * 60 * 1000;
+  nextBurnAt = Date.now() + TWELVE_HOURS_MS;
+  
+  console.log(`[Timer] New burn epoch scheduled. Ends at: ${new Date(nextBurnAt).toISOString()}`);
+
+  // Tell all connected clients about the new timer
+  const payload = {
+    t: 'next_burn',
+    at: new Date(nextBurnAt).toISOString(),
+    now: Date.now()
+  };
+  broadcastObserver(payload);
+  broadcast(payload, 'global'); // Also inform chat clients
+
+  // Automatically run this function again in 12 hours to create a loop
+  setTimeout(scheduleNextBurn, TWELVE_HOURS_MS);
+}
 
 /** Pushes an event to the global chat log, trimming old entries. */
 function pushLog(evt) {
@@ -324,3 +344,5 @@ wss.on('connection', (ws) => {
 // =================================================================
 const PORT = process.env.PORT || 8787;
 server.listen(PORT, () => console.log(`🚀 Server listening on port ${PORT}`));
+// Start the first burn timer cycle
+scheduleNextBurn();
