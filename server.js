@@ -21,6 +21,13 @@ const SERVER_T0 = Date.now(); // Canonical server start time
 
 const connection = new Connection(clusterApiUrl('mainnet-beta'), 'confirmed');
 
+// The public key of the wallet you want to display transactions for.
+// THIS MUST BE THE SAME WALLET THAT RECEIVES THE PAYMENTS.
+const DEV_WALLET_PUBLIC_KEY = new PublicKey('GF34Uc25emR9LgWvPK4nGd1nRnBsa5vvNHyAo8NxiZGE'); // Using your .env wallet for this example
+
+// We already have a `connection` constant, so we will rename this one to avoid errors.
+const SOLANA_CONNECTION = new Connection('https://api.mainnet-beta.solana.com'); 
+
 // =================================================================
 // 3. GLOBAL STATE & HELPERS
 // =================================================================
@@ -79,6 +86,62 @@ function broadcastObserver(obj) {
 /** Gets the current time in milliseconds. */
 const nowMs = () => Date.now();
 
+// Function to fetch recent transactions for the dev wallet
+async function fetchDevWalletTransactions() {
+    try {
+        const signatures = await SOLANA_CONNECTION.getConfirmedSignaturesForAddress2(
+            DEV_WALLET_PUBLIC_KEY,
+            { limit: 10 } // Fetch last 10 transactions
+        );
+
+        const transactions = [];
+        for (const sigInfo of signatures) {
+            const tx = await SOLANA_CONNECTION.getParsedTransaction(sigInfo.signature);
+            if (tx) {
+                // Simple parsing to get relevant info
+                // This part might need refinement based on exact token interactions
+                const blockTime = new Date(tx.blockTime * 1000).toLocaleString();
+                let type = 'Unknown';
+                let amount = 'N/A';
+                
+                // Basic check for transfers, more complex parsing for token burns might be needed
+                // For a burn, you'd look for an instruction from the burn program
+                // For simple SOL transfers, you'd look at pre/post balances
+                
+                // Example: Check for simple SOL transfers to/from the wallet
+                const preBalance = tx.meta.preBalances[tx.transaction.message.accountKeys.findIndex(key => key.equals(DEV_WALLET_PUBLIC_KEY))];
+                const postBalance = tx.meta.postBalances[tx.transaction.message.accountKeys.findIndex(key => key.equals(DEV_WALLET_PUBLIC_KEY))];
+                
+                if (preBalance && postBalance) {
+                    const balanceChange = (postBalance - preBalance) / 1_000_000_000; // Convert lamports to SOL
+                    if (balanceChange > 0) {
+                        type = 'Receive (SOL)';
+                        amount = `${balanceChange.toFixed(4)} SOL`;
+                    } else if (balanceChange < 0) {
+                        type = 'Send (SOL)';
+                        amount = `${Math.abs(balanceChange).toFixed(4)} SOL`;
+                    }
+                }
+                
+                // You'd add more specific logic here to detect your meme coin's burns
+                // For a specific token, you'd look into tx.meta.tokenBalances or tx.transaction.message.instructions
+                // For instance, if a burn happens, there will be an instruction in the transaction that details it.
+
+                transactions.push({
+                    time: blockTime,
+                    type: type, // Placeholder, will refine below
+                    amount: amount, // Placeholder
+                    signature: sigInfo.signature,
+                    slot: sigInfo.slot
+                });
+            }
+        }
+        return transactions;
+    } catch (error) {
+        console.error("Error fetching dev wallet transactions:", error);
+        return [];
+    }
+}
 // =================================================================
 // 4. DETERMINISTIC PHYSICS ENGINE
 // =================================================================
@@ -234,6 +297,13 @@ wssObserver.on('connection', (ws) => {
   ws.send(JSON.stringify({ t: 'time', now: nowMs() }));
   if (typeof nextBurnAt === 'number') {
     ws.send(JSON.stringify({ t: 'next_burn', at: new Date(nextBurnAt).toISOString(), now: nowMs() }));
+    // Fetch and send transactions to the newly connected client
+fetchDevWalletTransactions().then(transactions => {
+    ws.send(JSON.stringify({
+        t: 'dev_transactions',
+        transactions: transactions
+    }));
+});
   }
   ws.send(JSON.stringify({
     t: 'logo_current',
@@ -362,3 +432,12 @@ const PORT = process.env.PORT || 8787;
 server.listen(PORT, () => console.log(`🚀 Server listening on port ${PORT}`));
 // Start the first burn timer cycle
 scheduleNextBurn();
+
+// Periodically send updated dev wallet transactions to all observer clients
+setInterval(async () => {
+    const transactions = await fetchDevWalletTransactions();
+    broadcastObserver({
+        t: 'dev_transactions',
+        transactions: transactions
+    });
+}, 30 * 1000); // Update every 30 seconds
