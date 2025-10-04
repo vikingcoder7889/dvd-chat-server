@@ -210,8 +210,24 @@ app.post('/create-transfer', async (req, res) => {
 // =================================================================
 // 8. WEBSOCKET SERVERS
 // =================================================================
-const wss = new WebSocketServer({ server, path: '/chat' });
-const wssObserver = new WebSocketServer({ server, path: '/observer' });
+const wss = new WebSocketServer({ noServer: true });
+const wssObserver = new WebSocketServer({ noServer: true });
+
+server.on('upgrade', (request, socket, head) => {
+  const pathname = request.url;
+
+  if (pathname === '/chat') {
+    wss.handleUpgrade(request, socket, head, (ws) => {
+      wss.emit('connection', ws, request);
+    });
+  } else if (pathname === '/observer') {
+    wssObserver.handleUpgrade(request, socket, head, (ws) => {
+      wssObserver.emit('connection', ws, request);
+    });
+  } else {
+    socket.destroy();
+  }
+});
 
 // --- Observer WebSocket Handler ---
 wssObserver.on('connection', (ws) => {
