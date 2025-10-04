@@ -86,24 +86,49 @@ function broadcastObserver(obj) {
 /** Gets the current time in milliseconds. */
 const nowMs = () => Date.now();
 
-// Function to fetch recent transactions for the dev wallet
+// REPLACE THE ENTIRE OLD FUNCTION WITH THIS CORRECTED VERSION
 async function fetchDevWalletTransactions() {
     try {
         const signatures = await SOLANA_CONNECTION.getSignaturesForAddress(
             DEV_WALLET_PUBLIC_KEY,
-            { limit: 10 } // Fetch last 10 transactions
+            { limit: 15 } // Fetch last 15 transactions
         );
 
+        if (!signatures.length) return [];
+
+        const transactionSignatures = signatures.map(sigInfo => sigInfo.signature);
+        const parsedTransactions = await SOLANA_CONNECTION.getParsedTransactions(transactionSignatures, { maxSupportedTransactionVersion: 0 });
+
         const transactions = [];
-        for (const sigInfo of signatures) {
-            const tx = await SOLANA_CONNECTION.getParsedTransaction(sigInfo.signature);
+        for (let i = 0; i < signatures.length; i++) {
+            const sigInfo = signatures[i];
+            const tx = parsedTransactions[i]; // The correct variable for the transaction details
+
             if (tx) {
-                // Simple parsing to get relevant info
-                // This part might need refinement based on exact token interactions
                 const blockTime = new Date(tx.blockTime * 1000).toLocaleString();
-                let type = 'Unknown';
+                let type = 'Other';
                 let amount = 'N/A';
-                
+
+                // Find the index of our dev wallet in the transaction's account keys
+                const accountIndex = tx.transaction.message.accountKeys.findIndex(key => key.pubkey.equals(DEV_WALLET_PUBLIC_KEY));
+
+                if (accountIndex !== -1) {
+                    // Get the SOL balance before and after the transaction
+                    const preBalance = tx.meta.preBalances[accountIndex];
+                    const postBalance = tx.meta.postBalances[accountIndex];
+
+                    if (preBalance !== undefined && postBalance !== undefined) {
+                        const balanceChange = (postBalance - preBalance) / 1_000_000_000; // Convert lamports to SOL
+                        if (balanceChange > 0) {
+                            type = 'Receive (SOL)';
+                            amount = `+${balanceChange.toFixed(6)} SOL`;
+                        } else if (balanceChange < 0) {
+                            type = 'Send (SOL)';
+                            amount = `${balanceChange.toFixed(6)} SOL`;
+                        }
+                    }
+                }
+
                 transactions.push({
                     time: blockTime,
                     type: type,
