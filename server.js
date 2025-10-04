@@ -26,7 +26,7 @@ const connection = new Connection(clusterApiUrl('mainnet-beta'), 'confirmed');
 const DEV_WALLET_PUBLIC_KEY = new PublicKey('GF34Uc25emR9LgWvPK4nGd1nRnBsa5vvNHyAo8NxiZGE'); // Using your .env wallet for this example
 
 // We already have a `connection` constant, so we will rename this one to avoid errors.
-const SOLANA_CONNECTION = new Connection('https://api.mainnet-beta.solana.com'); 
+const SOLANA_CONNECTION = new Connection('https://mainnet.helius-rpc.com/?api-key=859f6258-f927-47ee-baa8-52f066e4fd25');
 
 // =================================================================
 // 3. GLOBAL STATE & HELPERS
