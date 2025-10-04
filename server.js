@@ -443,4 +443,4 @@ setInterval(async () => {
         t: 'dev_transactions',
         transactions: transactions
     });
-}, 30 * 1000); // Update every 30 seconds
+}, 300 * 1000); // Update every 5 minutes
