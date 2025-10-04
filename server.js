@@ -119,24 +119,26 @@ async function fetchDevWalletTransactions() {
         return [];
     }
 }
-                // Basic check for transfers, more complex parsing for token burns might be needed
-                // For a burn, you'd look for an instruction from the burn program
-                // For simple SOL transfers, you'd look at pre/post balances
-                
-                // Example: Check for simple SOL transfers to/from the wallet
-                const preBalance = tx.meta.preBalances[tx.transaction.message.accountKeys.findIndex(key => key.equals(DEV_WALLET_PUBLIC_KEY))];
-                const postBalance = tx.meta.postBalances[tx.transaction.message.accountKeys.findIndex(key => key.equals(DEV_WALLET_PUBLIC_KEY))];
-                
-                if (preBalance && postBalance) {
-                    const balanceChange = (postBalance - preBalance) / 1_000_000_000; // Convert lamports to SOL
-                    if (balanceChange > 0) {
-                        type = 'Receive (SOL)';
-                        amount = `${balanceChange.toFixed(4)} SOL`;
-                    } else if (balanceChange < 0) {
-                        type = 'Send (SOL)';
-                        amount = `${Math.abs(balanceChange).toFixed(4)} SOL`;
-                    }
-                }
+                // REPLACE IT WITH THIS CORRECTED BLOCK
+// Find the index of our dev wallet in the transaction's account keys
+const accountIndex = parsedTx.transaction.message.accountKeys.findIndex(key => key.pubkey.equals(DEV_WALLET_PUBLIC_KEY));
+
+if (accountIndex !== -1) {
+    // Get the SOL balance before and after the transaction
+    const preBalance = parsedTx.meta.preBalances[accountIndex];
+    const postBalance = parsedTx.meta.postBalances[accountIndex];
+
+    if (preBalance !== undefined && postBalance !== undefined) {
+        const balanceChange = (postBalance - preBalance) / 1_000_000_000; // Convert lamports to SOL
+        if (balanceChange > 0) {
+            type = 'Receive (SOL)';
+            amount = `${balanceChange.toFixed(6)} SOL`;
+        } else if (balanceChange < 0) {
+            type = 'Send (SOL)';
+            amount = `${Math.abs(balanceChange).toFixed(6)} SOL`;
+        }
+    }
+}
               
                 
 // =================================================================
