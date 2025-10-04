@@ -144,27 +144,6 @@ async function fetchDevWalletTransactions() {
         return [];
     }
 }
-                // REPLACE IT WITH THIS CORRECTED BLOCK
-// Find the index of our dev wallet in the transaction's account keys
-const accountIndex = parsedTx.transaction.message.accountKeys.findIndex(key => key.pubkey.equals(DEV_WALLET_PUBLIC_KEY));
-
-if (accountIndex !== -1) {
-    // Get the SOL balance before and after the transaction
-    const preBalance = parsedTx.meta.preBalances[accountIndex];
-    const postBalance = parsedTx.meta.postBalances[accountIndex];
-
-    if (preBalance !== undefined && postBalance !== undefined) {
-        const balanceChange = (postBalance - preBalance) / 1_000_000_000; // Convert lamports to SOL
-        if (balanceChange > 0) {
-            type = 'Receive (SOL)';
-            amount = `${balanceChange.toFixed(6)} SOL`;
-        } else if (balanceChange < 0) {
-            type = 'Send (SOL)';
-            amount = `${Math.abs(balanceChange).toFixed(6)} SOL`;
-        }
-    }
-}
-              
                 
 // =================================================================
 // 4. DETERMINISTIC PHYSICS ENGINE
