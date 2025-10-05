@@ -25,8 +25,7 @@ const connection = new Connection(clusterApiUrl('mainnet-beta'), 'confirmed');
 // THIS MUST BE THE SAME WALLET THAT RECEIVES THE PAYMENTS.
 const DEV_WALLET_PUBLIC_KEY = new PublicKey('GF34Uc25emR9LgWvPK4nGd1nRnBsa5vvNHyAo8NxiZGE'); // Using your .env wallet for this example
 
-// We already have a `connection` constant, so we will rename this one to avoid errors.
-const SOLANA_CONNECTION = new Connection('https://mainnet.helius-rpc.com/?api-key=859f6258-f927-47ee-baa8-52f066e4fd25');
+const SOLANA_CONNECTION = new Connection('https://blissful-misty-theorem.solana-mainnet.quiknode.pro/c3ddfd0700f3d27df39b2ff61b192a44d924890e/');
 
 // =================================================================
 // 3. GLOBAL STATE & HELPERS
