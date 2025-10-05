@@ -29,7 +29,7 @@ const connection = new Connection('https://solana-mainnet.g.alchemy.com/v2/5feEW
 // =================================================================
 let log = [];                               // Chat history: [{type, user?, text, ts}]
 const clients = new Map();                  // Connected clients: ws -> { user, room, bucket }
-
+const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 let devTransactionsCache = []; // <-- ADD THIS LINE
 
 // --- Logo Queue State ---
@@ -367,24 +367,37 @@ wss.on('connection', (ws) => {
         break;
 
       // REPLACE THE ENTIRE 'logo_claim' case block
+// REPLACE THE ENTIRE 'logo_claim' case block
 case 'logo_claim':
   try {
     const { tx, imageUrl } = msg;
-    const MAX_URL_CHARS = 2 * 1024 * 1024; // ~2MB limit for base64
+    const MAX_URL_CHARS = 2 * 1024 * 1024;
     const isHttpsImage = (url) => { try { const u = new URL(url); return u.protocol === 'https:' && /\.(png|jpg|jpeg|webp|gif|svg)(\?|#|$)/i.test(u.pathname); } catch { return false; } };
     const isDataImage = (url) => typeof url === 'string' && url.length < MAX_URL_CHARS && url.startsWith('data:image/') && /;base64,/.test(url);
 
     if (!isHttpsImage(imageUrl) && !isDataImage(imageUrl)) {
       ws.send(JSON.stringify({ t: 'error', text: 'Invalid image format or URL.' }));
-      return;
+      break;
     }
 
-    // THIS IS THE KEY FIX: We now explicitly set the transaction version
-    const parsed = await connection.getParsedTransaction(tx, { maxSupportedTransactionVersion: 0 });
+    // --- NEW: Polling logic to wait for confirmation ---
+    let parsed = null;
+    let attempts = 0;
+    const MAX_ATTEMPTS = 5;
+
+    while (!parsed && attempts < MAX_ATTEMPTS) {
+      attempts++;
+      parsed = await connection.getParsedTransaction(tx, { maxSupportedTransactionVersion: 0 });
+      if (!parsed) {
+        // If not found, wait a moment and try again
+        await sleep(1000); // Wait 1 second
+      }
+    }
+    // --- End of new logic ---
 
     if (!parsed || parsed.meta?.err) {
       ws.send(JSON.stringify({ t: 'error', text: 'Transaction not confirmed or failed.' }));
-      return;
+      break;
     }
 
     let paid = 0n;
@@ -396,7 +409,7 @@ case 'logo_claim':
 
     if (paid < BigInt(MIN_LAMPORTS)) {
       ws.send(JSON.stringify({ t: 'error', text: 'Correct payment not found in transaction.' }));
-      return;
+      break;
     }
 
     const wasIdle = !active && !queue.length;
@@ -412,6 +425,7 @@ case 'logo_claim':
     broadcastQueueSize(meta.room);
 
     if (wasIdle) startNext(meta.room);
+
   } catch (err) {
     console.error('logo_claim verify error', err);
     ws.send(JSON.stringify({ t: 'error', text: 'Verification error. See server logs.' }));
