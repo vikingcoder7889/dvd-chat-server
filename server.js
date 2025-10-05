@@ -19,13 +19,10 @@ const DEFAULT_OVERLAY_LOGO = '/dvd_logo-bouncing.png';
 const LOG_MAX = 300;
 const SERVER_T0 = Date.now(); // Canonical server start time
 
-const connection = new Connection(clusterApiUrl('mainnet-beta'), 'confirmed');
-
-// The public key of the wallet you want to display transactions for.
 // THIS MUST BE THE SAME WALLET THAT RECEIVES THE PAYMENTS.
 const DEV_WALLET_PUBLIC_KEY = new PublicKey('GF34Uc25emR9LgWvPK4nGd1nRnBsa5vvNHyAo8NxiZGE'); // Using your .env wallet for this example
 
-const SOLANA_CONNECTION = new Connection('https://solana-mainnet.g.alchemy.com/v2/5feEWsSBPHsAvcQK2zfji');
+const connection = new Connection('https://solana-mainnet.g.alchemy.com/v2/5feEWsSBPHsAvcQK2zfji', 'confirmed');
 
 // =================================================================
 // 3. GLOBAL STATE & HELPERS
@@ -90,7 +87,7 @@ const nowMs = () => Date.now();
 // REPLACE THE ENTIRE OLD FUNCTION WITH THIS CORRECTED VERSION
 async function fetchDevWalletTransactions() {
     try {
-        const signatures = await SOLANA_CONNECTION.getSignaturesForAddress(
+        const signatures = await connection.getSignaturesForAddress(
             DEV_WALLET_PUBLIC_KEY,
             { limit: 15 } // Fetch last 15 transactions
         );
@@ -98,7 +95,7 @@ async function fetchDevWalletTransactions() {
         if (!signatures.length) return [];
 
         const transactionSignatures = signatures.map(sigInfo => sigInfo.signature);
-        const parsedTransactions = await SOLANA_CONNECTION.getParsedTransactions(transactionSignatures, { maxSupportedTransactionVersion: 0 });
+        const parsedTransactions = await connection.getParsedTransactions(transactionSignatures, { maxSupportedTransactionVersion: 0 });
 
         const transactions = [];
         for (let i = 0; i < signatures.length; i++) {
