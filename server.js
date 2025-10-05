@@ -34,6 +34,8 @@ const SOLANA_CONNECTION = new Connection('https://mainnet.helius-rpc.com/?api-ke
 let log = [];                               // Chat history: [{type, user?, text, ts}]
 const clients = new Map();                  // Connected clients: ws -> { user, room, bucket }
 
+let devTransactionsCache = []; // <-- ADD THIS LINE
+
 // --- Logo Queue State ---
 let currentLogo = { imageUrl: DEFAULT_OVERLAY_LOGO, expiresAt: 0, setBy: 'system' };
 const queue = [];                           // FIFO queue: [{ imageUrl, setBy, tx }]
@@ -300,13 +302,11 @@ wssObserver.on('connection', (ws) => {
   ws.send(JSON.stringify({ t: 'time', now: nowMs() }));
   if (typeof nextBurnAt === 'number') {
     ws.send(JSON.stringify({ t: 'next_burn', at: new Date(nextBurnAt).toISOString(), now: nowMs() }));
-    // Fetch and send transactions to the newly connected client
-fetchDevWalletTransactions().then(transactions => {
-    ws.send(JSON.stringify({
-        t: 'dev_transactions',
-        transactions: transactions
-    }));
-});
+    // Instantly send the cached transactions to the new user
+ws.send(JSON.stringify({
+    t: 'dev_transactions',
+    transactions: devTransactionsCache
+}));
   }
   ws.send(JSON.stringify({
     t: 'logo_current',
@@ -436,11 +436,29 @@ server.listen(PORT, () => console.log(`🚀 Server listening on port ${PORT}`));
 // Start the first burn timer cycle
 scheduleNextBurn();
 
-// Periodically send updated dev wallet transactions to all observer clients
-setInterval(async () => {
+/// REPLACE THE OLD setInterval WITH THIS NEW VERSION
+
+// This function will run in the background to periodically update the cache
+async function refreshTransactionCache() {
+  console.log('[Cache] Refreshing dev wallet transactions...');
+  try {
     const transactions = await fetchDevWalletTransactions();
-    broadcastObserver({
-        t: 'dev_transactions',
-        transactions: transactions
-    });
-}, 300 * 1000); // Update every 5 minutes
+    if (transactions.length > 0) {
+      devTransactionsCache = transactions;
+      // Broadcast the new data to all connected clients
+      broadcastObserver({
+          t: 'dev_transactions',
+          transactions: devTransactionsCache
+      });
+      console.log(`[Cache] Successfully updated with ${transactions.length} transactions.`);
+    }
+  } catch (e) {
+    console.error('[Cache] Failed to refresh transaction cache:', e);
+  }
+}
+
+// Wait 5 seconds on server start before the first fetch
+setTimeout(refreshTransactionCache, 5000); 
+
+// Set the periodic refresh to every 10 minutes (600 seconds)
+setInterval(refreshTransactionCache, 600 * 1000);
