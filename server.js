@@ -25,7 +25,7 @@ const connection = new Connection(clusterApiUrl('mainnet-beta'), 'confirmed');
 // THIS MUST BE THE SAME WALLET THAT RECEIVES THE PAYMENTS.
 const DEV_WALLET_PUBLIC_KEY = new PublicKey('GF34Uc25emR9LgWvPK4nGd1nRnBsa5vvNHyAo8NxiZGE'); // Using your .env wallet for this example
 
-const SOLANA_CONNECTION = new Connection('https://blissful-misty-theorem.solana-mainnet.quiknode.pro/c3ddfd0700f3d27df39b2ff61b192a44d924890e/');
+const SOLANA_CONNECTION = new Connection('https://eth-mainnet.g.alchemy.com/v2/5feEWsSBPHsAvcQK2zfji');
 
 // =================================================================
 // 3. GLOBAL STATE & HELPERS
