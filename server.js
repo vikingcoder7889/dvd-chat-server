@@ -369,54 +369,57 @@ wss.on('connection', (ws) => {
         broadcast({ t: 'chat', ...chatEvt }, meta.room);
         break;
 
-      case 'logo_claim':
-        try {
-          const { tx, imageUrl } = msg;
-          const MAX_URL_CHARS = 2_900_000;
-          const isHttpsImage = (url) => { try { const u = new URL(url); return u.protocol === 'https:' && /\.(png|jpg|jpeg|webp|gif|svg)(\?|#|$)/i.test(u.pathname); } catch { return false; } };
-          const isDataImage = (url) => typeof url === 'string' && url.length < MAX_URL_CHARS && url.startsWith('data:image/') && /;base64,/.test(url);
+      // REPLACE THE ENTIRE 'logo_claim' case block
+case 'logo_claim':
+  try {
+    const { tx, imageUrl } = msg;
+    const MAX_URL_CHARS = 2 * 1024 * 1024; // ~2MB limit for base64
+    const isHttpsImage = (url) => { try { const u = new URL(url); return u.protocol === 'https:' && /\.(png|jpg|jpeg|webp|gif|svg)(\?|#|$)/i.test(u.pathname); } catch { return false; } };
+    const isDataImage = (url) => typeof url === 'string' && url.length < MAX_URL_CHARS && url.startsWith('data:image/') && /;base64,/.test(url);
 
-          if (!isHttpsImage(imageUrl) && !isDataImage(imageUrl)) {
-            ws.send(JSON.stringify({ t: 'error', text: 'Invalid image format or URL.' }));
-            return;
-          }
+    if (!isHttpsImage(imageUrl) && !isDataImage(imageUrl)) {
+      ws.send(JSON.stringify({ t: 'error', text: 'Invalid image format or URL.' }));
+      return;
+    }
 
-          const parsed = await connection.getParsedTransaction(tx, { maxSupportedTransactionVersion: 0, commitment: 'confirmed' });
-          if (!parsed || parsed.meta?.err) {
-            ws.send(JSON.stringify({ t: 'error', text: 'Transaction not confirmed' }));
-            return;
-          }
+    // THIS IS THE KEY FIX: We now explicitly set the transaction version
+    const parsed = await connection.getParsedTransaction(tx, { maxSupportedTransactionVersion: 0 });
 
-          let paid = 0n;
-          for (const ix of parsed.transaction.message.instructions) {
-            if (ix.parsed?.type === 'transfer' && ix.parsed.info?.destination === RECEIVER_PUBKEY.toString()) {
-              paid += BigInt(ix.parsed.info.lamports || 0);
-            }
-          }
+    if (!parsed || parsed.meta?.err) {
+      ws.send(JSON.stringify({ t: 'error', text: 'Transaction not confirmed or failed.' }));
+      return;
+    }
 
-          if (paid < BigInt(MIN_LAMPORTS)) {
-            ws.send(JSON.stringify({ t: 'error', text: 'Correct payment not found in transaction' }));
-            return;
-          }
+    let paid = 0n;
+    for (const ix of parsed.transaction.message.instructions) {
+      if (ix.program === 'system' && ix.parsed?.type === 'transfer' && ix.parsed.info?.destination === RECEIVER_PUBKEY.toString()) {
+        paid += BigInt(ix.parsed.info.lamports || 0);
+      }
+    }
 
-          const wasIdle = !active && !queue.length;
-          const item = { imageUrl, setBy: meta.user || 'user', tx };
-          queue.push(item);
+    if (paid < BigInt(MIN_LAMPORTS)) {
+      ws.send(JSON.stringify({ t: 'error', text: 'Correct payment not found in transaction.' }));
+      return;
+    }
 
-          const pos = (active ? 1 : 0) + queue.length;
-          ws.send(JSON.stringify({ t: 'logo_queue_pos', pos }));
-          
-          const systemEvt = { type: 'system', text: `${item.setBy} joined the logo queue (#${pos}).`, ts: new Date().toISOString() };
-          pushLog(systemEvt);
-          broadcast({ t: 'system', text: systemEvt.text, ts: systemEvt.ts }, meta.room);
-          broadcastQueueSize(meta.room);
+    const wasIdle = !active && !queue.length;
+    const item = { imageUrl, setBy: meta.user || 'user', tx };
+    queue.push(item);
 
-          if (wasIdle) startNext(meta.room);
-        } catch (err) {
-          console.error('logo_claim verify error', err);
-          ws.send(JSON.stringify({ t: 'error', text: 'Verification error' }));
-        }
-        break;
+    const pos = (active ? 1 : 0) + queue.length;
+    ws.send(JSON.stringify({ t: 'logo_queue_pos', pos }));
+    
+    const systemEvt = { type: 'system', text: `${item.setBy} joined the logo queue (#${pos}).`, ts: new Date().toISOString() };
+    pushLog(systemEvt);
+    broadcast({ t: 'system', text: systemEvt.text, ts: systemEvt.ts }, meta.room);
+    broadcastQueueSize(meta.room);
+
+    if (wasIdle) startNext(meta.room);
+  } catch (err) {
+    console.error('logo_claim verify error', err);
+    ws.send(JSON.stringify({ t: 'error', text: 'Verification error. See server logs.' }));
+  }
+  break;
     }
   });
 
