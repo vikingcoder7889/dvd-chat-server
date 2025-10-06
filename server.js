@@ -67,6 +67,13 @@ function pushLog(evt) {
 
 /** Broadcasts a JSON object to all clients in a specific room. */
 function broadcast(obj, room = 'global') {
+  // --- NEW: Minimum user count logic ---
+  if (obj.t === 'count') {
+    const MIN_USERS = 31;
+    obj.n = Math.max(MIN_USERS, clients.size);
+  }
+  // --- End of new logic ---
+
   const data = JSON.stringify(obj);
   for (const [ws, meta] of clients.entries()) {
     if (meta.room === room && ws.readyState === ws.OPEN) ws.send(data);
@@ -142,6 +149,63 @@ async function fetchDevWalletTransactions() {
         return [];
     }
 }
+
+const BOT_PERSONAS = [
+  {
+    user: 'MoonGoblin',
+    lines: [
+      'This project is going to be legendary.',
+      'Just saw the logo almost hit the corner, my heart skipped a beat!',
+      'Can\'t wait for the next burn event.',
+      'Feeling bullish on this.',
+    ]
+  },
+  {
+    user: 'InuStepbro',
+    lines: [
+      'So, how does the burn actually work?',
+      'Is the total supply fixed?',
+      'I\'m stuck in the washing machine, but also this chat is cool.',
+      'What happens when the timer runs out?',
+    ]
+  },
+  {
+    user: 'BagHodlr69',
+    lines: [
+      'I remember watching the DVD logo for hours as a kid. This is peak nostalgia.',
+      'Just holding. Never selling.',
+      'The design of this site is clean AF.',
+      'To the people who paid to change the logo: you are temporary. The DVD is eternal.',
+    ]
+  },
+  {
+    user: 'WenLambooo',
+    lines: [
+      'So when does this moon?',
+      'Someone answer @InuStepbro, the burn happens when the logo hits a corner, 0.5% of the dev supply goes poof.',
+      'The total supply is fixed, the burn just reduces what the dev holds.',
+      'Can we get this to 100x?',
+    ]
+  },
+  {
+    user: 'DumpusMaximus',
+    lines: [
+      'I just sold all my bags. Jk.',
+      'This is either genius or insane. I\'m in.',
+      'The agent log is a nice touch, makes it feel alive.',
+      'Is the orb single?',
+    ]
+  },
+  {
+    user: 'Ponzinator',
+    lines: [
+      'This has some serious potential. The mechanics are unique.',
+      'I\'ve seen a lot of projects, but this one is different.',
+      'The transparency with the on-chain transactions is a huge green flag.',
+      'The AI orb controlling it is a cool story element.',
+    ]
+  },
+];
                 
 // =================================================================
 // 4. DETERMINISTIC PHYSICS ENGINE
@@ -320,7 +384,7 @@ wss.on('connection', (ws) => {
   clients.set(ws, meta);
 
   // Greet the new user
-  ws.send(JSON.stringify({ t: 'welcome', log, users: clients.size }));
+ws.send(JSON.stringify({ t: 'welcome', log, users: Math.max(31, clients.size) }));
   ws.send(JSON.stringify({ t: 'time', now: nowMs() }));
   if (typeof nextBurnAt === 'number') {
     ws.send(JSON.stringify({ t: 'next_burn', at: new Date(nextBurnAt).toISOString(), now: nowMs() }));
@@ -475,3 +539,32 @@ setTimeout(refreshTransactionCache, 5000);
 
 // Set the periodic refresh to every 10 minutes (600 seconds)
 setInterval(refreshTransactionCache, 600 * 1000);
+
+// --- Bot Simulation Loop ---
+function startBotChatter() {
+  const randItem = (a) => a[Math.floor(Math.random() * a.length)];
+
+  function botTick() {
+    const persona = randItem(BOT_PERSONAS);
+    const text = randItem(persona.lines);
+    
+    const chatEvt = { 
+      type: 'user', 
+      user: persona.user, 
+      text, 
+      ts: new Date().toISOString() 
+    };
+    
+    pushLog(chatEvt);
+    broadcast({ t: 'chat', ...chatEvt }, 'global');
+
+    // Schedule the next bot message at a random interval
+    const nextTickIn = 15000 + Math.random() * 25000; // 15 to 40 seconds
+    setTimeout(botTick, nextTickIn);
+  }
+
+  // Start the first bot message after a short delay
+  setTimeout(botTick, 8000); // Wait 8 seconds before the first bot talks
+}
+
+startBotChatter();
