@@ -67,11 +67,7 @@ function pushLog(evt) {
 
 /** Broadcasts a JSON object to all clients in a specific room. */
 function broadcast(obj, room = 'global') {
-  // --- NEW: Minimum user count logic ---
-  if (obj.t === 'count') {
-    const MIN_USERS = 31;
-    obj.n = Math.max(MIN_USERS, clients.size);
-  }
+  
   // --- End of new logic ---
 
   const data = JSON.stringify(obj);
@@ -384,7 +380,7 @@ wss.on('connection', (ws) => {
   clients.set(ws, meta);
 
   // Greet the new user
-ws.send(JSON.stringify({ t: 'welcome', log, users: Math.max(31, clients.size) }));
+ws.send(JSON.stringify({ t: 'welcome', log, users: clients.size }));
   ws.send(JSON.stringify({ t: 'time', now: nowMs() }));
   if (typeof nextBurnAt === 'number') {
     ws.send(JSON.stringify({ t: 'next_burn', at: new Date(nextBurnAt).toISOString(), now: nowMs() }));
@@ -568,3 +564,31 @@ function startBotChatter() {
 }
 
 startBotChatter();
+
+// --- User Count Fluctuation Simulation ---
+let simulatedUserCount = 0;
+
+function updateUserCount() {
+  const min = 38;
+  const max = 126;
+  
+  // Add or subtract a small random number from the current count
+  let change = (Math.random() - 0.48) * 4; // Tends to slightly increase
+  simulatedUserCount += change;
+  
+  // Ensure the count stays within the desired min/max range
+  if (simulatedUserCount < min) simulatedUserCount = min;
+  if (simulatedUserCount > max) simulatedUserCount = max;
+  
+  const finalCount = Math.round(simulatedUserCount + clients.size);
+  
+  // Broadcast the new count to everyone
+  broadcast({ t: 'count', n: finalCount }, 'global');
+  
+  // Schedule the next update at a random interval
+  const nextUpdateIn = 4000 + Math.random() * 7000; // 4 to 11 seconds
+  setTimeout(updateUserCount, nextUpdateIn);
+}
+
+// Start the simulation after a brief delay
+setTimeout(updateUserCount, 3000);
