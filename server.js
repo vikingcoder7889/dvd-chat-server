@@ -145,7 +145,7 @@ async function fetchDevWalletTransactions() {
         return [];
     }
 }
-
+// REPLACE THE OLD BOT_PERSONAS ARRAY WITH THIS NEW ONE
 const BOT_PERSONAS = [
   {
     user: 'MoonGoblin',
@@ -170,7 +170,6 @@ const BOT_PERSONAS = [
     lines: [
       'I remember watching the DVD logo for hours as a kid. This is peak nostalgia.',
       'Just holding. Never selling.',
-      'The design of this site is clean AF.',
       'To the people who paid to change the logo: you are temporary. The DVD is eternal.',
     ]
   },
@@ -188,7 +187,6 @@ const BOT_PERSONAS = [
     lines: [
       'I just sold all my bags. Jk.',
       'This is either genius or insane. I\'m in.',
-      'The agent log is a nice touch, makes it feel alive.',
       'Is the orb single?',
     ]
   },
@@ -198,9 +196,49 @@ const BOT_PERSONAS = [
       'This has some serious potential. The mechanics are unique.',
       'I\'ve seen a lot of projects, but this one is different.',
       'The transparency with the on-chain transactions is a huge green flag.',
-      'The AI orb controlling it is a cool story element.',
     ]
   },
+  {
+    user: 'TokenMcLovin',
+    lines: [
+      'Is this the next 1000x coin?',
+      'Just bought a small bag. Let\'s see what happens.',
+      'The design of this site is clean AF.',
+    ]
+  },
+  {
+    user: 'Elonmusk',
+    lines: [
+      'Interesting concept.',
+      '42',
+      'This has potential to be the most entertaining outcome.',
+      'Who let the dogs out?',
+    ]
+  },
+  {
+    user: 'FudFighter',
+    lines: [
+      'Stop spreading FUD. This project is solid.',
+      'The dev is active and the community is growing. What more do you want?',
+      'Ignore the haters, we\'re going to make it.',
+    ]
+  },
+  {
+    user: 'GigaChad',
+    lines: [
+      'Yes.',
+      'Bought the dip. Refuses to elaborate.',
+      'Diamond handing this to zero or the moon. There is no in-between.',
+    ]
+  },
+  {
+    user: 'ToTheRugbucks',
+    lines: [
+      'Just took out a second mortgage for this. LFG!',
+      'Is it too late to get in?',
+      'The agent log is a nice touch, makes it feel alive.',
+    ]
+  }
 ];
                 
 // =================================================================
