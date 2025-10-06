@@ -20,7 +20,7 @@ const LOG_MAX = 300;
 const SERVER_T0 = Date.now(); // Canonical server start time
 
 // THIS MUST BE THE SAME WALLET THAT RECEIVES THE PAYMENTS.
-const DEV_WALLET_PUBLIC_KEY = new PublicKey('GF34Uc25emR9LgWvPK4nGd1nRnBsa5vvNHyAo8NxiZGE'); // Using your .env wallet for this example
+const DEV_WALLET_PUBLIC_KEY = new PublicKey('D9jkBbrtVR3dKyrnL84wgBTuCLcJNeFdRFqpytSa66ME'); // Using your .env wallet for this example
 
 const connection = new Connection('https://solana-mainnet.g.alchemy.com/v2/5feEWsSBPHsAvcQK2zfji', 'confirmed');
 
