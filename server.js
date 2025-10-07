@@ -84,6 +84,52 @@ function broadcastObserver(obj) {
   });
 }
 
+// --- NEW FUNCTION TO FETCH AND BROADCAST TRANSACTIONS ---
+async function fetchAndBroadcastTransactions() {
+  try {
+    const signatures = await connection.getSignaturesForAddress(RECEIVER_PUBKEY, { limit: 15 });
+    if (!signatures || signatures.length === 0) {
+      console.log('No transactions found for treasury wallet.');
+      return;
+    }
+
+    const transactions = [];
+    for (const sigInfo of signatures) {
+      const parsedTx = await connection.getParsedTransaction(sigInfo.signature, {
+        maxSupportedTransactionVersion: 0,
+        commitment: 'confirmed',
+      });
+      
+      if (parsedTx && parsedTx.blockTime) {
+        let txType = 'Other';
+        let amount = 'N/A';
+
+        // Check for simple SOL transfers
+        for (const ix of parsedTx.transaction.message.instructions) {
+            if (ix.program === 'system' && ix.parsed?.type === 'transfer' && ix.parsed.info.destination === RECEIVER_PUBKEY.toString()) {
+                txType = 'Receive (SOL)';
+                amount = `+${(ix.parsed.info.lamports / 1e9).toFixed(9)} SOL`;
+            }
+        }
+
+        transactions.push({
+          time: new Date(parsedTx.blockTime * 1000).toLocaleString(),
+          type: txType,
+          amount: amount,
+          signature: sigInfo.signature,
+          slot: sigInfo.slot,
+        });
+      }
+    }
+    
+    // Broadcast the fetched transactions to all observers
+    broadcastObserver({ t: 'dev_transactions', transactions });
+
+  } catch (error) {
+    console.error('Failed to fetch and broadcast transactions:', error);
+  }
+}
+
 /** Gets the current time in milliseconds. */
 const nowMs = () => Date.now();
 
@@ -401,6 +447,7 @@ ws.send(JSON.stringify({
     t: 'dev_transactions',
     transactions: devTransactionsCache
 }));
+fetchAndBroadcastTransactions();
   }
   ws.send(JSON.stringify({
     t: 'logo_current',
@@ -538,6 +585,9 @@ case 'logo_claim':
     broadcast({ t: 'count', n: clients.size }, 'global');
   });
 });
+
+// Fetch and broadcast transactions every 60 seconds
+setInterval(fetchAndBroadcastTransactions, 60000);
 
 // =================================================================
 // 9. SERVER INITIALIZATION
