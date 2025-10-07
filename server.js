@@ -20,6 +20,7 @@ const LOG_MAX = 300;
 const SERVER_T0 = Date.now(); // Canonical server start time
 
 const DEV_WALLET_PUBLIC_KEY = new PublicKey('D9jkBbrtVR3dKyrnL84wgBTuCLcJNeFdRFqpytSa66ME');
+const TREASURY_TOKEN_ACCOUNT = new PublicKey('6c9aJYbGFjWCTNNPNgRTXyb1nfLrLDvS73GyaV5xkirm');
 
 // [FIXED] Use your actual Solana Alchemy RPC URL here.
 const connection = new Connection('https://solana-mainnet.g.alchemy.com/v2/5feEWsSBPHsAvcQK2zfji', 'confirmed');
@@ -438,6 +439,25 @@ async function refreshTransactionCache() {
     console.error('[Cache] Failed to refresh transaction cache:', e);
   }
 }
+/** Periodically fetches and broadcasts on-chain stats like treasury supply. */
+async function refreshOnChainStats() {
+  console.log('[Stats] Refreshing on-chain treasury stats...');
+  try {
+    const balanceInfo = await connection.getTokenAccountBalance(TREASURY_TOKEN_ACCOUNT);
+
+    const stats = {
+      treasurySupply: balanceInfo.value.uiAmount,
+    };
+
+    // Broadcast the new stats to all connected clients
+    broadcastObserver({ t: 'stats_update', stats });
+    broadcast({ t: 'stats_update', stats }, 'global'); // Also send to chat clients
+    console.log(`[Stats] Successfully updated. Treasury Supply: ${stats.treasurySupply}`);
+
+  } catch (error) {
+    console.error("[Stats] Failed to refresh on-chain stats:", error);
+  }
+}
 
 /** Simulates bot chatter */
 function startBotChatter() {
@@ -475,7 +495,9 @@ setTimeout(refreshTransactionCache, 5000);
 setInterval(refreshTransactionCache, 600 * 1000);
 startBotChatter();
 setTimeout(updateUserCount, 3000);
-
+// Add these lines
+setTimeout(refreshOnChainStats, 6000); // Run 6 seconds after start
+setInterval(refreshOnChainStats, 45000); // Refresh every 45 seconds
 // --- Start the server ---
 const PORT = process.env.PORT || 8787;
 server.listen(PORT, () => console.log(`🚀 Server listening on port ${PORT}`));
