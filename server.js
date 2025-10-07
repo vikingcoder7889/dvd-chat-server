@@ -39,40 +39,33 @@ let active = null;
 let revertTimer = null;
 let nextBurnAt = 0;
 
-/** Schedules the next burn and broadcasts it, then reschedules itself. */
 function scheduleNextBurn() {
-  const TWELVE_HOURS_MS = 12 * 60 * 60 * 1000;
-  nextBurnAt = Date.now() + TWELVE_HOURS_MS;
-  
-  console.log(`[Timer] New burn epoch scheduled. Ends at: ${new Date(nextBurnAt).toISOString()}`);
-
-  const payload = { t: 'next_burn', at: new Date(nextBurnAt).toISOString(), now: Date.now() };
-  broadcastObserver(payload);
-  broadcast(payload, 'global');
-
-  setTimeout(scheduleNextBurn, TWELVE_HOURS_MS);
+    const TWELVE_HOURS_MS = 12 * 60 * 60 * 1000;
+    nextBurnAt = Date.now() + TWELVE_HOURS_MS;
+    console.log(`[Timer] New burn epoch scheduled. Ends at: ${new Date(nextBurnAt).toISOString()}`);
+    const payload = { t: 'next_burn', at: new Date(nextBurnAt).toISOString(), now: Date.now() };
+    broadcastObserver(payload);
+    broadcast(payload, 'global');
+    setTimeout(scheduleNextBurn, TWELVE_HOURS_MS);
 }
 
-/** Pushes an event to the global chat log. */
 function pushLog(evt) {
-  log.push(evt);
-  if (log.length > LOG_MAX) log = log.slice(-LOG_MAX);
+    log.push(evt);
+    if (log.length > LOG_MAX) log = log.slice(-LOG_MAX);
 }
 
-/** Broadcasts a JSON object to all chat clients. */
 function broadcast(obj, room = 'global') {
-  const data = JSON.stringify(obj);
-  for (const [ws, meta] of clients.entries()) {
-    if (meta.room === room && ws.readyState === ws.OPEN) ws.send(data);
-  }
+    const data = JSON.stringify(obj);
+    for (const [ws, meta] of clients.entries()) {
+        if (meta.room === room && ws.readyState === ws.OPEN) ws.send(data);
+    }
 }
 
-/** Broadcasts a JSON object to all observer clients. */
 function broadcastObserver(obj) {
-  const data = JSON.stringify(obj);
-  wssObserver.clients.forEach(ws => {
-    if (ws.readyState === ws.OPEN) ws.send(data);
-  });
+    const data = JSON.stringify(obj);
+    wssObserver.clients.forEach(ws => {
+        if (ws.readyState === ws.OPEN) ws.send(data);
+    });
 }
 
 /** [FIXED] Fetches transactions one-by-one to avoid rate-limiting. */
@@ -148,7 +141,7 @@ function physicsFor(imageUrl, t0 = SERVER_T0) {
   return { worldW: WORLD_W, worldH: WORLD_H, logoW: LOGO_W, logoH: LOGO_H, x0, y0, vx, vy, t0 };
 }
 
-/** Calculates the full state (pos, vel) of the logo at a specific time. */
+/** [FIXED] Calculates the full state (pos, vel) of the logo at a specific time. */
 function __logoStateAt(nowMs) {
   const phys   = physicsFor(currentLogo.imageUrl, active?.startedAt || SERVER_T0);
   const rangeX = phys.worldW - phys.logoW;
@@ -179,7 +172,7 @@ function __logoStateAt(nowMs) {
 // =================================================================
 // 5. LOGO QUEUE MANAGEMENT
 // =================================================================
-/** Processes the next logo in the queue with a seamless transition. */
+/** [FIXED] Processes the next logo in the queue with a seamless transition. */
 function startNext(room = 'global') {
   clearTimeout(revertTimer);
   const now = Date.now();
@@ -289,6 +282,7 @@ server.on('upgrade', (request, socket, head) => {
   }
 });
 
+/** [FIXED] Helper function to send the live state to any new connection. */
 function sendLiveState(ws) {
     const now = Date.now();
     ws.send(JSON.stringify({ t: 'time', now }));
@@ -296,7 +290,6 @@ function sendLiveState(ws) {
         ws.send(JSON.stringify({ t: 'next_burn', at: new Date(nextBurnAt).toISOString(), now }));
     }
 
-    // [FIXED] Send the LIVE physics state to new connections
     const currentState = __logoStateAt(now);
     const livePhysics = {
         worldW: WORLD_W, worldH: WORLD_H, logoW: LOGO_W, logoH: LOGO_H,
@@ -332,7 +325,6 @@ wss.on('connection', (ws) => {
   broadcast({ t: 'count', n: clients.size }, meta.room);
 
   ws.on('message', async (buf) => {
-    // Rate limit, parsing, etc.
     const b = meta.bucket;
     const t = Date.now();
     if (t - b.t0 > 10000) { b.t0 = t; b.n = 0; }
@@ -343,7 +335,6 @@ wss.on('connection', (ws) => {
     let msg = {};
     try { msg = JSON.parse(buf.toString()); } catch { return; }
 
-    // Message router
     switch (msg.t) {
       case 'hello':
         meta.user = String(msg.user || 'anon').slice(0, 24);
