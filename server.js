@@ -22,7 +22,7 @@ const SERVER_T0 = Date.now(); // Canonical server start time
 const DEV_WALLET_PUBLIC_KEY = new PublicKey('D9jkBbrtVR3dKyrnL84wgBTuCLcJNeFdRFqpytSa66ME');
 
 // [FIXED] Use your actual Solana Alchemy RPC URL here.
-const connection = new Connection('https://solana-mainnet.g.alchemy.com/v2/YOUR_ALCHEMY_SOLANA_KEY', 'confirmed');
+const connection = new Connection('https://solana-mainnet.g.alchemy.com/v2/5feEWsSBPHsAvcQK2zfji', 'confirmed');
 
 // =================================================================
 // 3. GLOBAL STATE & HELPERS
