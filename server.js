@@ -183,14 +183,21 @@ function __logoStateAt(nowMs) {
 // 5. LOGO QUEUE MANAGEMENT
 // =================================================================
 /** Processes the next logo in the queue with a seamless transition. */
+/** [FIXED] Processes the next logo and SAVES the seamless physics state. */
 function startNext(room = 'global') {
   clearTimeout(revertTimer);
   const now = Date.now();
   const currentState = __logoStateAt(now);
 
+  // Create the seamless physics object based on the current state
+  const seamlessPhysics = {
+      worldW: WORLD_W, worldH: WORLD_H, logoW: LOGO_W, logoH: LOGO_H,
+      x0: currentState.x, y0: currentState.y, vx: currentState.vx, vy: currentState.vy, t0: now
+  };
+
   if (!queue.length) {
     if (active) {
-        active = null;
+        active = null; // Clear the active logo
         currentLogo = { imageUrl: DEFAULT_OVERLAY_LOGO, expiresAt: 0, setBy: 'system' };
     } else {
         return;
@@ -201,6 +208,7 @@ function startNext(room = 'global') {
       ...item,
       startedAt: now,
       expiresAt: now + CLAIM_DURATION_MS,
+      phys: seamlessPhysics // <-- CRITICAL: Save the seamless state
     };
     currentLogo = {
       imageUrl: item.imageUrl,
@@ -209,20 +217,15 @@ function startNext(room = 'global') {
     };
   }
 
-  const seamlessPhysics = {
-    worldW: WORLD_W, worldH: WORLD_H, logoW: LOGO_W, logoH: LOGO_H,
-    x0: currentState.x, y0: currentState.y, vx: currentState.vx, vy: currentState.vy, t0: now
-  };
-
   const payload = {
     t: 'logo_current', imageUrl: currentLogo.imageUrl, expiresAt: new Date(currentLogo.expiresAt).toISOString(),
     setBy: currentLogo.setBy, phys: seamlessPhysics, now: now
   };
   broadcast(payload, room);
   broadcastObserver(payload);
-  
+
   broadcastQueueSize(room);
-  
+
   const duration = active ? CLAIM_DURATION_MS : 1;
   revertTimer = setTimeout(() => startNext(room), duration);
 }
