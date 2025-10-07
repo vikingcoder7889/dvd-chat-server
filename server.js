@@ -1,4 +1,4 @@
-/* server.js (ESM) - CORRECTED VERSION */
+/* server.js (ESM) - FINAL CORRECTED VERSION */
 
 // =================================================================
 // 1. IMPORTS
@@ -21,23 +21,23 @@ const SERVER_T0 = Date.now(); // Canonical server start time
 
 const DEV_WALLET_PUBLIC_KEY = new PublicKey('D9jkBbrtVR3dKyrnL84wgBTuCLcJNeFdRFqpytSa66ME');
 
-// [FIXED] Corrected the connection to use a Solana RPC URL
-const connection = new Connection(clusterApiUrl('mainnet-beta'), 'confirmed');
+// [FIXED] Use your actual Solana Alchemy RPC URL here.
+const connection = new Connection('https://solana-mainnet.g.alchemy.com/v2/YOUR_ALCHEMY_SOLANA_KEY', 'confirmed');
 
 // =================================================================
 // 3. GLOBAL STATE & HELPERS
 // =================================================================
-let log = [];                               // Chat history: [{type, user?, text, ts}]
-const clients = new Map();                  // Connected clients: ws -> { user, room, bucket }
+let log = [];                               // Chat history
+const clients = new Map();                  // Connected clients
 const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 let devTransactionsCache = [];
 
 // --- Logo Queue State ---
 let currentLogo = { imageUrl: DEFAULT_OVERLAY_LOGO, expiresAt: 0, setBy: 'system' };
-const queue = [];                           // FIFO queue: [{ imageUrl, setBy, tx }]
-let active = null;                          // Currently active logo: { imageUrl, setBy, tx, startedAt, expiresAt }
+const queue = [];
+let active = null;
 let revertTimer = null;
-let nextBurnAt = 0; // Will be set by our new function
+let nextBurnAt = 0;
 
 /** Schedules the next burn and broadcasts it, then reschedules itself. */
 function scheduleNextBurn() {
@@ -46,24 +46,20 @@ function scheduleNextBurn() {
   
   console.log(`[Timer] New burn epoch scheduled. Ends at: ${new Date(nextBurnAt).toISOString()}`);
 
-  const payload = {
-    t: 'next_burn',
-    at: new Date(nextBurnAt).toISOString(),
-    now: Date.now()
-  };
+  const payload = { t: 'next_burn', at: new Date(nextBurnAt).toISOString(), now: Date.now() };
   broadcastObserver(payload);
   broadcast(payload, 'global');
 
   setTimeout(scheduleNextBurn, TWELVE_HOURS_MS);
 }
 
-/** Pushes an event to the global chat log, trimming old entries. */
+/** Pushes an event to the global chat log. */
 function pushLog(evt) {
   log.push(evt);
   if (log.length > LOG_MAX) log = log.slice(-LOG_MAX);
 }
 
-/** Broadcasts a JSON object to all clients in a specific room. */
+/** Broadcasts a JSON object to all chat clients. */
 function broadcast(obj, room = 'global') {
   const data = JSON.stringify(obj);
   for (const [ws, meta] of clients.entries()) {
@@ -79,36 +75,28 @@ function broadcastObserver(obj) {
   });
 }
 
-/** Fetches the latest transactions for the dev wallet. This is used by the caching mechanism. */
+/** [FIXED] Fetches transactions one-by-one to avoid rate-limiting. */
 async function fetchDevWalletTransactions() {
     try {
         const signatures = await connection.getSignaturesForAddress(
             DEV_WALLET_PUBLIC_KEY,
-            { limit: 15 } // Fetch last 15 transactions
+            { limit: 15 }
         );
-
         if (!signatures.length) return [];
 
         const transactions = [];
-        // [FIXED] Fetch transactions one by one to avoid rate limits.
         for (const sigInfo of signatures) {
-            const tx = await connection.getParsedTransaction(sigInfo.signature, {
-                maxSupportedTransactionVersion: 0,
-            });
-
+            const tx = await connection.getParsedTransaction(sigInfo.signature, { maxSupportedTransactionVersion: 0 });
             if (tx) {
                 const blockTime = new Date(tx.blockTime * 1000).toLocaleString();
                 let type = 'Other';
                 let amount = 'N/A';
-
                 const accountIndex = tx.transaction.message.accountKeys.findIndex(key => key.pubkey.equals(DEV_WALLET_PUBLIC_KEY));
-
                 if (accountIndex !== -1) {
                     const preBalance = tx.meta.preBalances[accountIndex];
                     const postBalance = tx.meta.postBalances[accountIndex];
-
                     if (preBalance !== undefined && postBalance !== undefined) {
-                        const balanceChange = (postBalance - preBalance) / 1_000_000_000; // Convert lamports to SOL
+                        const balanceChange = (postBalance - preBalance) / 1_000_000_000;
                         if (balanceChange > 0) {
                             type = 'Receive (SOL)';
                             amount = `+${balanceChange.toFixed(6)} SOL`;
@@ -118,14 +106,7 @@ async function fetchDevWalletTransactions() {
                         }
                     }
                 }
-
-                transactions.push({
-                    time: blockTime,
-                    type: type,
-                    amount: amount,
-                    signature: sigInfo.signature,
-                    slot: sigInfo.slot
-                });
+                transactions.push({ time: blockTime, type, amount, signature: sigInfo.signature, slot: sigInfo.slot });
             }
         }
         return transactions;
@@ -152,11 +133,10 @@ const BOT_PERSONAS = [
 // =================================================================
 // 4. DETERMINISTIC PHYSICS ENGINE
 // =================================================================
-const WORLD_W = 1920, WORLD_H = 1080; // Logical world dimensions
-const LOGO_W  = 300,  LOGO_H  = 180;  // Logical logo dimensions
-const SPEED   = 380;                  // Speed in world units/sec
+const WORLD_W = 1920, WORLD_H = 1080;
+const LOGO_W  = 300,  LOGO_H  = 180;
+const SPEED   = 380;
 
-/** Generates deterministic physics properties based on a seed (image URL). */
 function physicsFor(imageUrl, t0 = SERVER_T0) {
   const seed = [...String(imageUrl || DEFAULT_OVERLAY_LOGO)]
     .reduce((a, c) => ((a << 5) - a + c.charCodeAt(0)) | 0, 0) >>> 0;
@@ -168,7 +148,7 @@ function physicsFor(imageUrl, t0 = SERVER_T0) {
   return { worldW: WORLD_W, worldH: WORLD_H, logoW: LOGO_W, logoH: LOGO_H, x0, y0, vx, vy, t0 };
 }
 
-/** [FIXED] Calculates the full state (pos, vel) of the logo at a specific time. */
+/** Calculates the full state (pos, vel) of the logo at a specific time. */
 function __logoStateAt(nowMs) {
   const phys   = physicsFor(currentLogo.imageUrl, active?.startedAt || SERVER_T0);
   const rangeX = phys.worldW - phys.logoW;
@@ -199,18 +179,17 @@ function __logoStateAt(nowMs) {
 // =================================================================
 // 5. LOGO QUEUE MANAGEMENT
 // =================================================================
-/** [FIXED] Processes the next logo in the queue with a seamless transition. */
+/** Processes the next logo in the queue with a seamless transition. */
 function startNext(room = 'global') {
   clearTimeout(revertTimer);
-
   const now = Date.now();
   const currentState = __logoStateAt(now);
 
   if (!queue.length) {
-    if (active) { // only transition if there was a logo active
+    if (active) {
         active = null;
         currentLogo = { imageUrl: DEFAULT_OVERLAY_LOGO, expiresAt: 0, setBy: 'system' };
-    } else { // if nothing was active, just stay default and do nothing
+    } else {
         return;
     }
   } else {
@@ -228,24 +207,13 @@ function startNext(room = 'global') {
   }
 
   const seamlessPhysics = {
-    worldW: WORLD_W,
-    worldH: WORLD_H,
-    logoW: LOGO_W,
-    logoH: LOGO_H,
-    x0: currentState.x,
-    y0: currentState.y,
-    vx: currentState.vx,
-    vy: currentState.vy,
-    t0: now, // The transition starts NOW
+    worldW: WORLD_W, worldH: WORLD_H, logoW: LOGO_W, logoH: LOGO_H,
+    x0: currentState.x, y0: currentState.y, vx: currentState.vx, vy: currentState.vy, t0: now
   };
 
   const payload = {
-    t: 'logo_current',
-    imageUrl: currentLogo.imageUrl,
-    expiresAt: new Date(currentLogo.expiresAt).toISOString(),
-    setBy: currentLogo.setBy,
-    phys: seamlessPhysics,
-    now: now
+    t: 'logo_current', imageUrl: currentLogo.imageUrl, expiresAt: new Date(currentLogo.expiresAt).toISOString(),
+    setBy: currentLogo.setBy, phys: seamlessPhysics, now: now
   };
   broadcast(payload, room);
   broadcastObserver(payload);
@@ -256,7 +224,6 @@ function startNext(room = 'global') {
   revertTimer = setTimeout(() => startNext(room), duration);
 }
 
-/** Broadcasts the current size of the logo queue. */
 function broadcastQueueSize(room = 'global') {
   const n = (active ? 1 : 0) + queue.length;
   broadcast({ t: 'logo_queue_size', n }, room);
@@ -313,41 +280,44 @@ const wssObserver = new WebSocketServer({ noServer: true });
 
 server.on('upgrade', (request, socket, head) => {
   const pathname = request.url;
-
   if (pathname === '/chat') {
-    wss.handleUpgrade(request, socket, head, (ws) => {
-      wss.emit('connection', ws, request);
-    });
+    wss.handleUpgrade(request, socket, head, (ws) => wss.emit('connection', ws, request));
   } else if (pathname === '/observer') {
-    wssObserver.handleUpgrade(request, socket, head, (ws) => {
-      wssObserver.emit('connection', ws, request);
-    });
+    wssObserver.handleUpgrade(request, socket, head, (ws) => wssObserver.emit('connection', ws, request));
   } else {
     socket.destroy();
   }
 });
 
+function sendLiveState(ws) {
+    const now = Date.now();
+    ws.send(JSON.stringify({ t: 'time', now }));
+    if (typeof nextBurnAt === 'number' && nextBurnAt > 0) {
+        ws.send(JSON.stringify({ t: 'next_burn', at: new Date(nextBurnAt).toISOString(), now }));
+    }
+
+    // [FIXED] Send the LIVE physics state to new connections
+    const currentState = __logoStateAt(now);
+    const livePhysics = {
+        worldW: WORLD_W, worldH: WORLD_H, logoW: LOGO_W, logoH: LOGO_H,
+        x0: currentState.x, y0: currentState.y,
+        vx: currentState.vx, vy: currentState.vy,
+        t0: now,
+    };
+    ws.send(JSON.stringify({
+        t: 'logo_current',
+        imageUrl: currentLogo.imageUrl,
+        expiresAt: new Date(currentLogo.expiresAt).toISOString(),
+        setBy: currentLogo.setBy,
+        phys: livePhysics, // Send the live state
+        now: now
+    }));
+}
+
 // --- Observer WebSocket Handler ---
 wssObserver.on('connection', (ws) => {
-  ws.send(JSON.stringify({ t: 'time', now: Date.now() }));
-  if (typeof nextBurnAt === 'number' && nextBurnAt > 0) {
-    ws.send(JSON.stringify({ t: 'next_burn', at: new Date(nextBurnAt).toISOString(), now: Date.now() }));
-  }
-  
-  // [FIXED] Instantly send the cached transactions to the new user
-  ws.send(JSON.stringify({
-    t: 'dev_transactions',
-    transactions: devTransactionsCache
-  }));
-
-  ws.send(JSON.stringify({
-    t: 'logo_current',
-    imageUrl: currentLogo.imageUrl,
-    expiresAt: new Date(currentLogo.expiresAt).toISOString(),
-    setBy: currentLogo.setBy,
-    phys: physicsFor(currentLogo.imageUrl, active?.startedAt || SERVER_T0),
-    now: Date.now()
-  }));
+  sendLiveState(ws);
+  ws.send(JSON.stringify({ t: 'dev_transactions', transactions: devTransactionsCache }));
 });
 
 // --- Chat WebSocket Handler ---
@@ -356,23 +326,13 @@ wss.on('connection', (ws) => {
   clients.set(ws, meta);
 
   ws.send(JSON.stringify({ t: 'welcome', log, users: clients.size }));
-  ws.send(JSON.stringify({ t: 'time', now: Date.now() }));
-  if (typeof nextBurnAt === 'number' && nextBurnAt > 0) {
-    ws.send(JSON.stringify({ t: 'next_burn', at: new Date(nextBurnAt).toISOString(), now: Date.now() }));
-  }
-  ws.send(JSON.stringify({
-    t: 'logo_current',
-    imageUrl: currentLogo.imageUrl,
-    expiresAt: new Date(currentLogo.expiresAt).toISOString(),
-    setBy: currentLogo.setBy,
-    phys: physicsFor(currentLogo.imageUrl, active?.startedAt || SERVER_T0),
-    now: Date.now()
-  }));
+  sendLiveState(ws);
 
   broadcastQueueSize(meta.room);
   broadcast({ t: 'count', n: clients.size }, meta.room);
 
   ws.on('message', async (buf) => {
+    // Rate limit, parsing, etc.
     const b = meta.bucket;
     const t = Date.now();
     if (t - b.t0 > 10000) { b.t0 = t; b.n = 0; }
@@ -380,78 +340,63 @@ wss.on('connection', (ws) => {
       ws.send(JSON.stringify({ t: 'error', text: 'Rate limit exceeded' }));
       return;
     }
-
     let msg = {};
     try { msg = JSON.parse(buf.toString()); } catch { return; }
 
+    // Message router
     switch (msg.t) {
       case 'hello':
         meta.user = String(msg.user || 'anon').slice(0, 24);
         meta.room = String(msg.room || 'global');
         break;
-
       case 'chat':
         const text = String(msg.text || '').slice(0, 500).replace(/fuck|cunt|nigg|kike|spic|retard/gi, '****');
         const chatEvt = { type: 'user', user: meta.user, text, ts: msg.ts || new Date().toISOString() };
         pushLog(chatEvt);
         broadcast({ t: 'chat', ...chatEvt }, meta.room);
         break;
-
       case 'logo_claim':
         try {
             const { tx, imageUrl } = msg;
             const MAX_URL_CHARS = 2 * 1024 * 1024;
             const isHttpsImage = (url) => { try { const u = new URL(url); return u.protocol === 'https:' && /\.(png|jpg|jpeg|webp|gif|svg)(\?|#|$)/i.test(u.pathname); } catch { return false; } };
             const isDataImage = (url) => typeof url === 'string' && url.length < MAX_URL_CHARS && url.startsWith('data:image/') && /;base64,/.test(url);
-
             if (!isHttpsImage(imageUrl) && !isDataImage(imageUrl)) {
                 ws.send(JSON.stringify({ t: 'error', text: 'Invalid image format or URL.' }));
                 break;
             }
-
             let parsed = null;
             let attempts = 0;
             const MAX_ATTEMPTS = 5;
-
             while (!parsed && attempts < MAX_ATTEMPTS) {
                 attempts++;
                 parsed = await connection.getParsedTransaction(tx, { maxSupportedTransactionVersion: 0 });
-                if (!parsed) {
-                    await sleep(1000); // Wait 1 second
-                }
+                if (!parsed) { await sleep(1000); }
             }
-
             if (!parsed || parsed.meta?.err) {
                 ws.send(JSON.stringify({ t: 'error', text: 'Transaction not confirmed or failed.' }));
                 break;
             }
-
             let paid = 0n;
             for (const ix of parsed.transaction.message.instructions) {
                 if (ix.program === 'system' && ix.parsed?.type === 'transfer' && ix.parsed.info?.destination === RECEIVER_PUBKEY.toString()) {
                     paid += BigInt(ix.parsed.info.lamports || 0);
                 }
             }
-
             if (paid < BigInt(MIN_LAMPORTS)) {
                 ws.send(JSON.stringify({ t: 'error', text: 'Correct payment not found in transaction.' }));
                 break;
             }
-
             const wasIdle = !active && !queue.length;
             const item = { imageUrl, setBy: meta.user || 'user', tx };
             queue.push(item);
-
             const pos = (active ? 1 : 0) + queue.length;
             ws.send(JSON.stringify({ t: 'logo_queue_pos', pos }));
-            
             const systemEvt = { type: 'system', text: `${item.setBy} joined the logo queue (#${pos}).`, ts: new Date().toISOString() };
             pushLog(systemEvt);
             broadcast({ t: 'system', text: systemEvt.text, ts: systemEvt.ts }, meta.room);
             broadcastQueueSize(meta.room);
-
             if (wasIdle) startNext(meta.room);
-
         } catch (err) {
             console.error('logo_claim verify error', err);
             ws.send(JSON.stringify({ t: 'error', text: 'Verification error. See server logs.' }));
@@ -466,19 +411,17 @@ wss.on('connection', (ws) => {
   });
 });
 
-
 // =================================================================
 // 9. SERVER INITIALIZATION & BACKGROUND TASKS
 // =================================================================
 
-/** This function will run in the background to periodically update the transaction cache */
+/** Periodically updates the transaction cache */
 async function refreshTransactionCache() {
   console.log('[Cache] Refreshing treasury wallet transactions...');
   try {
     const transactions = await fetchDevWalletTransactions();
     if (transactions.length > 0) {
       devTransactionsCache = transactions;
-      // Broadcast the new data to all connected clients
       broadcastObserver({
           t: 'dev_transactions',
           transactions: devTransactionsCache
@@ -490,64 +433,43 @@ async function refreshTransactionCache() {
   }
 }
 
-// Start the first burn timer cycle
-scheduleNextBurn();
-
-// Wait 5 seconds on server start before the first transaction fetch
-setTimeout(refreshTransactionCache, 5000); 
-
-// Set the periodic refresh to every 10 minutes (600 seconds)
-setInterval(refreshTransactionCache, 600 * 1000);
-
-// --- Bot Simulation Loop ---
+/** Simulates bot chatter */
 function startBotChatter() {
   const randItem = (a) => a[Math.floor(Math.random() * a.length)];
-
   function botTick() {
     const persona = randItem(BOT_PERSONAS);
     const text = randItem(persona.lines);
-    
-    const chatEvt = { 
-      type: 'user', 
-      user: persona.user, 
-      text, 
-      ts: new Date().toISOString() 
-    };
-    
+    const chatEvt = { type: 'user', user: persona.user, text, ts: new Date().toISOString() };
     pushLog(chatEvt);
     broadcast({ t: 'chat', ...chatEvt }, 'global');
-
-    const nextTickIn = 15000 + Math.random() * 25000; // 15 to 40 seconds
+    const nextTickIn = 15000 + Math.random() * 25000;
     setTimeout(botTick, nextTickIn);
   }
-
   setTimeout(botTick, 8000);
 }
 
-startBotChatter();
-
-// --- User Count Fluctuation Simulation ---
+/** Simulates user count fluctuations */
 let simulatedUserCount = 0;
 function updateUserCount() {
   const min = 38;
   const max = 126;
-  
   let change = (Math.random() - 0.48) * 4;
   simulatedUserCount += change;
-  
   if (simulatedUserCount < min) simulatedUserCount = min;
   if (simulatedUserCount > max) simulatedUserCount = max;
-  
   const finalCount = Math.round(simulatedUserCount + clients.size);
-  
   broadcast({ t: 'count', n: finalCount }, 'global');
-  
   const nextUpdateIn = 4000 + Math.random() * 7000;
   setTimeout(updateUserCount, nextUpdateIn);
 }
 
+// --- Start background tasks ---
+scheduleNextBurn();
+setTimeout(refreshTransactionCache, 5000); 
+setInterval(refreshTransactionCache, 600 * 1000);
+startBotChatter();
 setTimeout(updateUserCount, 3000);
 
-
+// --- Start the server ---
 const PORT = process.env.PORT || 8787;
 server.listen(PORT, () => console.log(`🚀 Server listening on port ${PORT}`));
