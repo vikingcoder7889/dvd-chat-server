@@ -89,13 +89,12 @@ async function fetchDevWalletTransactions() {
 
         if (!signatures.length) return [];
 
-        const transactionSignatures = signatures.map(sigInfo => sigInfo.signature);
-        const parsedTransactions = await connection.getParsedTransactions(transactionSignatures, { maxSupportedTransactionVersion: 0 });
-
         const transactions = [];
-        for (let i = 0; i < signatures.length; i++) {
-            const sigInfo = signatures[i];
-            const tx = parsedTransactions[i];
+        // [FIXED] Fetch transactions one by one to avoid rate limits.
+        for (const sigInfo of signatures) {
+            const tx = await connection.getParsedTransaction(sigInfo.signature, {
+                maxSupportedTransactionVersion: 0,
+            });
 
             if (tx) {
                 const blockTime = new Date(tx.blockTime * 1000).toLocaleString();
