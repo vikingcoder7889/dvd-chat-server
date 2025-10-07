@@ -1,4 +1,4 @@
-/* server.js (ESM) */
+/* server.js (ESM) - CORRECTED VERSION */
 
 // =================================================================
 // 1. IMPORTS
@@ -19,10 +19,10 @@ const DEFAULT_OVERLAY_LOGO = '/dvd_logo-bouncing.png';
 const LOG_MAX = 300;
 const SERVER_T0 = Date.now(); // Canonical server start time
 
-// THIS MUST BE THE SAME WALLET THAT RECEIVES THE PAYMENTS.
-const DEV_WALLET_PUBLIC_KEY = new PublicKey('D9jkBbrtVR3dKyrnL84wgBTuCLcJNeFdRFqpytSa66ME'); // Using your .env wallet for this example
+const DEV_WALLET_PUBLIC_KEY = new PublicKey('D9jkBbrtVR3dKyrnL84wgBTuCLcJNeFdRFqpytSa66ME');
 
-const connection = new Connection('https://solana-mainnet.g.alchemy.com/v2/5feEWsSBPHsAvcQK2zfji', 'confirmed');
+// [FIXED] Corrected the connection to use a Solana RPC URL
+const connection = new Connection(clusterApiUrl('mainnet-beta'), 'confirmed');
 
 // =================================================================
 // 3. GLOBAL STATE & HELPERS
@@ -30,7 +30,7 @@ const connection = new Connection('https://solana-mainnet.g.alchemy.com/v2/5feEW
 let log = [];                               // Chat history: [{type, user?, text, ts}]
 const clients = new Map();                  // Connected clients: ws -> { user, room, bucket }
 const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms));
-let devTransactionsCache = []; // <-- ADD THIS LINE
+let devTransactionsCache = [];
 
 // --- Logo Queue State ---
 let currentLogo = { imageUrl: DEFAULT_OVERLAY_LOGO, expiresAt: 0, setBy: 'system' };
@@ -46,16 +46,14 @@ function scheduleNextBurn() {
   
   console.log(`[Timer] New burn epoch scheduled. Ends at: ${new Date(nextBurnAt).toISOString()}`);
 
-  // Tell all connected clients about the new timer
   const payload = {
     t: 'next_burn',
     at: new Date(nextBurnAt).toISOString(),
     now: Date.now()
   };
   broadcastObserver(payload);
-  broadcast(payload, 'global'); // Also inform chat clients
+  broadcast(payload, 'global');
 
-  // Automatically run this function again in 12 hours to create a loop
   setTimeout(scheduleNextBurn, TWELVE_HOURS_MS);
 }
 
@@ -67,9 +65,6 @@ function pushLog(evt) {
 
 /** Broadcasts a JSON object to all clients in a specific room. */
 function broadcast(obj, room = 'global') {
-  
-  // --- End of new logic ---
-
   const data = JSON.stringify(obj);
   for (const [ws, meta] of clients.entries()) {
     if (meta.room === room && ws.readyState === ws.OPEN) ws.send(data);
@@ -84,56 +79,7 @@ function broadcastObserver(obj) {
   });
 }
 
-// --- NEW FUNCTION TO FETCH AND BROADCAST TRANSACTIONS ---
-async function fetchAndBroadcastTransactions() {
-  try {
-    const signatures = await connection.getSignaturesForAddress(RECEIVER_PUBKEY, { limit: 15 });
-    if (!signatures || signatures.length === 0) {
-      console.log('No transactions found for treasury wallet.');
-      return;
-    }
-
-    const transactions = [];
-    for (const sigInfo of signatures) {
-      const parsedTx = await connection.getParsedTransaction(sigInfo.signature, {
-        maxSupportedTransactionVersion: 0,
-        commitment: 'confirmed',
-      });
-      
-      if (parsedTx && parsedTx.blockTime) {
-        let txType = 'Other';
-        let amount = 'N/A';
-
-        // Check for simple SOL transfers
-        for (const ix of parsedTx.transaction.message.instructions) {
-            if (ix.program === 'system' && ix.parsed?.type === 'transfer' && ix.parsed.info.destination === RECEIVER_PUBKEY.toString()) {
-                txType = 'Receive (SOL)';
-                amount = `+${(ix.parsed.info.lamports / 1e9).toFixed(9)} SOL`;
-            }
-        }
-
-        transactions.push({
-          time: new Date(parsedTx.blockTime * 1000).toLocaleString(),
-          type: txType,
-          amount: amount,
-          signature: sigInfo.signature,
-          slot: sigInfo.slot,
-        });
-      }
-    }
-    
-    // Broadcast the fetched transactions to all observers
-    broadcastObserver({ t: 'dev_transactions', transactions });
-
-  } catch (error) {
-    console.error('Failed to fetch and broadcast transactions:', error);
-  }
-}
-
-/** Gets the current time in milliseconds. */
-const nowMs = () => Date.now();
-
-// REPLACE THE ENTIRE OLD FUNCTION WITH THIS CORRECTED VERSION
+/** Fetches the latest transactions for the dev wallet. This is used by the caching mechanism. */
 async function fetchDevWalletTransactions() {
     try {
         const signatures = await connection.getSignaturesForAddress(
@@ -149,18 +95,16 @@ async function fetchDevWalletTransactions() {
         const transactions = [];
         for (let i = 0; i < signatures.length; i++) {
             const sigInfo = signatures[i];
-            const tx = parsedTransactions[i]; // The correct variable for the transaction details
+            const tx = parsedTransactions[i];
 
             if (tx) {
                 const blockTime = new Date(tx.blockTime * 1000).toLocaleString();
                 let type = 'Other';
                 let amount = 'N/A';
 
-                // Find the index of our dev wallet in the transaction's account keys
                 const accountIndex = tx.transaction.message.accountKeys.findIndex(key => key.pubkey.equals(DEV_WALLET_PUBLIC_KEY));
 
                 if (accountIndex !== -1) {
-                    // Get the SOL balance before and after the transaction
                     const preBalance = tx.meta.preBalances[accountIndex];
                     const postBalance = tx.meta.postBalances[accountIndex];
 
@@ -191,100 +135,19 @@ async function fetchDevWalletTransactions() {
         return [];
     }
 }
-// REPLACE THE OLD BOT_PERSONAS ARRAY WITH THIS NEW ONE
+
 const BOT_PERSONAS = [
-  {
-    user: 'MoonGoblin',
-    lines: [
-      'This project is going to be legendary.',
-      'Just saw the logo almost hit the corner, my heart skipped a beat!',
-      'Can\'t wait for the next burn event.',
-      'Feeling bullish on this.',
-    ]
-  },
-  {
-    user: 'InuStepbro',
-    lines: [
-      'So, how does the burn actually work?',
-      'Is the total supply fixed?',
-      'I\'m stuck in the washing machine, but also this chat is cool.',
-      'What happens when the timer runs out?',
-    ]
-  },
-  {
-    user: 'BagHodlr69',
-    lines: [
-      'I remember watching the DVD logo for hours as a kid. This is peak nostalgia.',
-      'Just holding. Never selling.',
-      'To the people who paid to change the logo: you are temporary. The DVD is eternal.',
-    ]
-  },
-  {
-    user: 'WenLambooo',
-    lines: [
-      'So when does this moon?',
-      'Someone answer @InuStepbro, the burn happens when the logo hits a corner, 0.5% of the dev supply goes poof.',
-      'The total supply is fixed, the burn just reduces what the dev holds.',
-      'Can we get this to 100x?',
-    ]
-  },
-  {
-    user: 'DumpusMaximus',
-    lines: [
-      'I just sold all my bags. Jk.',
-      'This is either genius or insane. I\'m in.',
-      'Is the orb single?',
-    ]
-  },
-  {
-    user: 'Ponzinator',
-    lines: [
-      'This has some serious potential. The mechanics are unique.',
-      'I\'ve seen a lot of projects, but this one is different.',
-      'The transparency with the on-chain transactions is a huge green flag.',
-    ]
-  },
-  {
-    user: 'TokenMcLovin',
-    lines: [
-      'Is this the next 1000x coin?',
-      'Just bought a small bag. Let\'s see what happens.',
-      'The design of this site is clean AF.',
-    ]
-  },
-  {
-    user: 'Elonmusk',
-    lines: [
-      'Interesting concept.',
-      '42',
-      'This has potential to be the most entertaining outcome.',
-      'Who let the dogs out?',
-    ]
-  },
-  {
-    user: 'FudFighter',
-    lines: [
-      'Stop spreading FUD. This project is solid.',
-      'The dev is active and the community is growing. What more do you want?',
-      'Ignore the haters, we\'re going to make it.',
-    ]
-  },
-  {
-    user: 'GigaChad',
-    lines: [
-      'Yes.',
-      'Bought the dip. Refuses to elaborate.',
-      'Diamond handing this to zero or the moon. There is no in-between.',
-    ]
-  },
-  {
-    user: 'ToTheRugbucks',
-    lines: [
-      'Just took out a second mortgage for this. LFG!',
-      'Is it too late to get in?',
-      'The agent log is a nice touch, makes it feel alive.',
-    ]
-  }
+  { user: 'MoonGoblin', lines: ['This project is going to be legendary.', 'Just saw the logo almost hit the corner, my heart skipped a beat!', 'Can\'t wait for the next burn event.', 'Feeling bullish on this.'] },
+  { user: 'InuStepbro', lines: ['So, how does the burn actually work?', 'Is the total supply fixed?', 'I\'m stuck in the washing machine, but also this chat is cool.', 'What happens when the timer runs out?'] },
+  { user: 'BagHodlr69', lines: ['I remember watching the DVD logo for hours as a kid. This is peak nostalgia.', 'Just holding. Never selling.', 'To the people who paid to change the logo: you are temporary. The DVD is eternal.'] },
+  { user: 'WenLambooo', lines: ['So when does this moon?', 'Someone answer @InuStepbro, the burn happens when the logo hits a corner, 0.5% of the dev supply goes poof.', 'The total supply is fixed, the burn just reduces what the dev holds.', 'Can we get this to 100x?'] },
+  { user: 'DumpusMaximus', lines: ['I just sold all my bags. Jk.', 'This is either genius or insane. I\'m in.', 'Is the orb single?'] },
+  { user: 'Ponzinator', lines: ['This has some serious potential. The mechanics are unique.', 'I\'ve seen a lot of projects, but this one is different.', 'The transparency with the on-chain transactions is a huge green flag.'] },
+  { user: 'TokenMcLovin', lines: ['Is this the next 1000x coin?', 'Just bought a small bag. Let\'s see what happens.', 'The design of this site is clean AF.'] },
+  { user: 'Elonmusk', lines: ['Interesting concept.', '42', 'This has potential to be the most entertaining outcome.', 'Who let the dogs out?'] },
+  { user: 'FudFighter', lines: ['Stop spreading FUD. This project is solid.', 'The dev is active and the community is growing. What more do you want?', 'Ignore the haters, we\'re going to make it.'] },
+  { user: 'GigaChad', lines: ['Yes.', 'Bought the dip. Refuses to elaborate.', 'Diamond handing this to zero or the moon. There is no in-between.'] },
+  { user: 'ToTheRugbucks', lines: ['Just took out a second mortgage for this. LFG!', 'Is it too late to get in?', 'The agent log is a nice touch, makes it feel alive.'] }
 ];
                 
 // =================================================================
@@ -306,64 +169,92 @@ function physicsFor(imageUrl, t0 = SERVER_T0) {
   return { worldW: WORLD_W, worldH: WORLD_H, logoW: LOGO_W, logoH: LOGO_H, x0, y0, vx, vy, t0 };
 }
 
-/** Calculates the state (pos, vel) of the logo at a specific time for telemetry. */
-function __logoStateAt(timeMs) {
-  const phys = physicsFor(currentLogo.imageUrl, active?.startedAt || SERVER_T0);
+/** [FIXED] Calculates the full state (pos, vel) of the logo at a specific time. */
+function __logoStateAt(nowMs) {
+  const phys   = physicsFor(currentLogo.imageUrl, active?.startedAt || SERVER_T0);
   const rangeX = phys.worldW - phys.logoW;
   const rangeY = phys.worldH - phys.logoH;
-  const tSec = Math.max(0, (timeMs - phys.t0) / 1000);
+  const tSec   = Math.max(0, (nowMs - phys.t0) / 1000);
 
-  const reflect1D = (p0, v, range) => {
+  const __reflect1D = (p0, v, range) => {
     const span = range * 2;
     const raw = p0 + v * tSec;
     const mod = ((raw % span) + span) % span;
     const pos = mod <= range ? mod : (span - mod);
-    return Math.max(0, Math.min(range, pos));
+    const dir = mod <= range ? Math.sign(v) : -Math.sign(v);
+    const vel = Math.abs(v) * dir;
+    return { pos, vel };
   };
 
-  const x = reflect1D(phys.x0, phys.vx, rangeX);
-  const y = reflect1D(phys.y0, phys.vy, rangeY);
-  return { x, y }; // Simplified for telemetry, can add back vel if needed
+  const rx = __reflect1D(phys.x0, phys.vx, rangeX);
+  const ry = __reflect1D(phys.y0, phys.vy, rangeY);
+
+  const x  = Math.max(0, Math.min(rangeX, rx.pos));
+  const y  = Math.max(0, Math.min(rangeY, ry.pos));
+  const vx = rx.vel;
+  const vy = ry.vel;
+
+  return { x, y, vx, vy };
 }
 
 // =================================================================
 // 5. LOGO QUEUE MANAGEMENT
 // =================================================================
-/** Processes the next logo in the queue or reverts to default. */
+/** [FIXED] Processes the next logo in the queue with a seamless transition. */
 function startNext(room = 'global') {
   clearTimeout(revertTimer);
 
+  const now = Date.now();
+  const currentState = __logoStateAt(now);
+
   if (!queue.length) {
-    active = null;
-    currentLogo = { imageUrl: DEFAULT_OVERLAY_LOGO, expiresAt: 0, setBy: 'system' };
+    if (active) { // only transition if there was a logo active
+        active = null;
+        currentLogo = { imageUrl: DEFAULT_OVERLAY_LOGO, expiresAt: 0, setBy: 'system' };
+    } else { // if nothing was active, just stay default and do nothing
+        return;
+    }
   } else {
     const item = queue.shift();
-    const startedAt = Date.now();
     active = {
       ...item,
-      startedAt,
-      expiresAt: startedAt + CLAIM_DURATION_MS,
+      startedAt: now,
+      expiresAt: now + CLAIM_DURATION_MS,
     };
     currentLogo = {
       imageUrl: item.imageUrl,
       expiresAt: active.expiresAt,
       setBy: item.setBy,
     };
-    revertTimer = setTimeout(() => startNext(room), CLAIM_DURATION_MS);
   }
 
-  // Notify clients of the change
+  const seamlessPhysics = {
+    worldW: WORLD_W,
+    worldH: WORLD_H,
+    logoW: LOGO_W,
+    logoH: LOGO_H,
+    x0: currentState.x,
+    y0: currentState.y,
+    vx: currentState.vx,
+    vy: currentState.vy,
+    t0: now, // The transition starts NOW
+  };
+
   const payload = {
     t: 'logo_current',
     imageUrl: currentLogo.imageUrl,
     expiresAt: new Date(currentLogo.expiresAt).toISOString(),
     setBy: currentLogo.setBy,
-    phys: physicsFor(currentLogo.imageUrl, active?.startedAt || SERVER_T0),
-    now: nowMs()
+    phys: seamlessPhysics,
+    now: now
   };
   broadcast(payload, room);
   broadcastObserver(payload);
+  
   broadcastQueueSize(room);
+  
+  const duration = active ? CLAIM_DURATION_MS : 1;
+  revertTimer = setTimeout(() => startNext(room), duration);
 }
 
 /** Broadcasts the current size of the logo queue. */
@@ -379,8 +270,8 @@ let __lastTelemetrySend = 0;
 setInterval(() => {
   const now = Date.now();
   if (now - __lastTelemetrySend < 83) return; // ~12 Hz throttle
-  const st = __logoStateAt(now);
-  broadcastObserver({ t: 'logo_state', ...st });
+  const { x, y } = __logoStateAt(now);
+  broadcastObserver({ t: 'logo_state', x, y });
   __lastTelemetrySend = now;
 }, 16);
 
@@ -439,23 +330,24 @@ server.on('upgrade', (request, socket, head) => {
 
 // --- Observer WebSocket Handler ---
 wssObserver.on('connection', (ws) => {
-  ws.send(JSON.stringify({ t: 'time', now: nowMs() }));
-  if (typeof nextBurnAt === 'number') {
-    ws.send(JSON.stringify({ t: 'next_burn', at: new Date(nextBurnAt).toISOString(), now: nowMs() }));
-    // Instantly send the cached transactions to the new user
-ws.send(JSON.stringify({
+  ws.send(JSON.stringify({ t: 'time', now: Date.now() }));
+  if (typeof nextBurnAt === 'number' && nextBurnAt > 0) {
+    ws.send(JSON.stringify({ t: 'next_burn', at: new Date(nextBurnAt).toISOString(), now: Date.now() }));
+  }
+  
+  // [FIXED] Instantly send the cached transactions to the new user
+  ws.send(JSON.stringify({
     t: 'dev_transactions',
     transactions: devTransactionsCache
-}));
-fetchAndBroadcastTransactions();
-  }
+  }));
+
   ws.send(JSON.stringify({
     t: 'logo_current',
     imageUrl: currentLogo.imageUrl,
     expiresAt: new Date(currentLogo.expiresAt).toISOString(),
     setBy: currentLogo.setBy,
     phys: physicsFor(currentLogo.imageUrl, active?.startedAt || SERVER_T0),
-    now: nowMs()
+    now: Date.now()
   }));
 });
 
@@ -464,11 +356,10 @@ wss.on('connection', (ws) => {
   const meta = { user: 'anon', room: 'global', bucket: { t0: Date.now(), n: 0 } };
   clients.set(ws, meta);
 
-  // Greet the new user
-ws.send(JSON.stringify({ t: 'welcome', log, users: clients.size }));
-  ws.send(JSON.stringify({ t: 'time', now: nowMs() }));
-  if (typeof nextBurnAt === 'number') {
-    ws.send(JSON.stringify({ t: 'next_burn', at: new Date(nextBurnAt).toISOString(), now: nowMs() }));
+  ws.send(JSON.stringify({ t: 'welcome', log, users: clients.size }));
+  ws.send(JSON.stringify({ t: 'time', now: Date.now() }));
+  if (typeof nextBurnAt === 'number' && nextBurnAt > 0) {
+    ws.send(JSON.stringify({ t: 'next_burn', at: new Date(nextBurnAt).toISOString(), now: Date.now() }));
   }
   ws.send(JSON.stringify({
     t: 'logo_current',
@@ -476,20 +367,17 @@ ws.send(JSON.stringify({ t: 'welcome', log, users: clients.size }));
     expiresAt: new Date(currentLogo.expiresAt).toISOString(),
     setBy: currentLogo.setBy,
     phys: physicsFor(currentLogo.imageUrl, active?.startedAt || SERVER_T0),
-    now: nowMs()
+    now: Date.now()
   }));
 
-  // Notify everyone of the new counts
   broadcastQueueSize(meta.room);
   broadcast({ t: 'count', n: clients.size }, meta.room);
 
-  // --- Message Handling ---
   ws.on('message', async (buf) => {
-    // [FIXED] Rate limit ALL incoming messages before processing
     const b = meta.bucket;
     const t = Date.now();
-    if (t - b.t0 > 10000) { b.t0 = t; b.n = 0; } // Reset bucket every 10s
-    if (++b.n > 10) { // Allow up to 10 messages per 10s
+    if (t - b.t0 > 10000) { b.t0 = t; b.n = 0; }
+    if (++b.n > 10) {
       ws.send(JSON.stringify({ t: 'error', text: 'Rate limit exceeded' }));
       return;
     }
@@ -497,7 +385,6 @@ ws.send(JSON.stringify({ t: 'welcome', log, users: clients.size }));
     let msg = {};
     try { msg = JSON.parse(buf.toString()); } catch { return; }
 
-    // --- Message Router ---
     switch (msg.t) {
       case 'hello':
         meta.user = String(msg.user || 'anon').slice(0, 24);
@@ -511,97 +398,83 @@ ws.send(JSON.stringify({ t: 'welcome', log, users: clients.size }));
         broadcast({ t: 'chat', ...chatEvt }, meta.room);
         break;
 
-      // REPLACE THE ENTIRE 'logo_claim' case block
-// REPLACE THE ENTIRE 'logo_claim' case block
-case 'logo_claim':
-  try {
-    const { tx, imageUrl } = msg;
-    const MAX_URL_CHARS = 2 * 1024 * 1024;
-    const isHttpsImage = (url) => { try { const u = new URL(url); return u.protocol === 'https:' && /\.(png|jpg|jpeg|webp|gif|svg)(\?|#|$)/i.test(u.pathname); } catch { return false; } };
-    const isDataImage = (url) => typeof url === 'string' && url.length < MAX_URL_CHARS && url.startsWith('data:image/') && /;base64,/.test(url);
+      case 'logo_claim':
+        try {
+            const { tx, imageUrl } = msg;
+            const MAX_URL_CHARS = 2 * 1024 * 1024;
+            const isHttpsImage = (url) => { try { const u = new URL(url); return u.protocol === 'https:' && /\.(png|jpg|jpeg|webp|gif|svg)(\?|#|$)/i.test(u.pathname); } catch { return false; } };
+            const isDataImage = (url) => typeof url === 'string' && url.length < MAX_URL_CHARS && url.startsWith('data:image/') && /;base64,/.test(url);
 
-    if (!isHttpsImage(imageUrl) && !isDataImage(imageUrl)) {
-      ws.send(JSON.stringify({ t: 'error', text: 'Invalid image format or URL.' }));
-      break;
-    }
+            if (!isHttpsImage(imageUrl) && !isDataImage(imageUrl)) {
+                ws.send(JSON.stringify({ t: 'error', text: 'Invalid image format or URL.' }));
+                break;
+            }
 
-    // --- NEW: Polling logic to wait for confirmation ---
-    let parsed = null;
-    let attempts = 0;
-    const MAX_ATTEMPTS = 5;
+            let parsed = null;
+            let attempts = 0;
+            const MAX_ATTEMPTS = 5;
 
-    while (!parsed && attempts < MAX_ATTEMPTS) {
-      attempts++;
-      parsed = await connection.getParsedTransaction(tx, { maxSupportedTransactionVersion: 0 });
-      if (!parsed) {
-        // If not found, wait a moment and try again
-        await sleep(1000); // Wait 1 second
-      }
-    }
-    // --- End of new logic ---
+            while (!parsed && attempts < MAX_ATTEMPTS) {
+                attempts++;
+                parsed = await connection.getParsedTransaction(tx, { maxSupportedTransactionVersion: 0 });
+                if (!parsed) {
+                    await sleep(1000); // Wait 1 second
+                }
+            }
 
-    if (!parsed || parsed.meta?.err) {
-      ws.send(JSON.stringify({ t: 'error', text: 'Transaction not confirmed or failed.' }));
-      break;
-    }
+            if (!parsed || parsed.meta?.err) {
+                ws.send(JSON.stringify({ t: 'error', text: 'Transaction not confirmed or failed.' }));
+                break;
+            }
 
-    let paid = 0n;
-    for (const ix of parsed.transaction.message.instructions) {
-      if (ix.program === 'system' && ix.parsed?.type === 'transfer' && ix.parsed.info?.destination === RECEIVER_PUBKEY.toString()) {
-        paid += BigInt(ix.parsed.info.lamports || 0);
-      }
-    }
+            let paid = 0n;
+            for (const ix of parsed.transaction.message.instructions) {
+                if (ix.program === 'system' && ix.parsed?.type === 'transfer' && ix.parsed.info?.destination === RECEIVER_PUBKEY.toString()) {
+                    paid += BigInt(ix.parsed.info.lamports || 0);
+                }
+            }
 
-    if (paid < BigInt(MIN_LAMPORTS)) {
-      ws.send(JSON.stringify({ t: 'error', text: 'Correct payment not found in transaction.' }));
-      break;
-    }
+            if (paid < BigInt(MIN_LAMPORTS)) {
+                ws.send(JSON.stringify({ t: 'error', text: 'Correct payment not found in transaction.' }));
+                break;
+            }
 
-    const wasIdle = !active && !queue.length;
-    const item = { imageUrl, setBy: meta.user || 'user', tx };
-    queue.push(item);
+            const wasIdle = !active && !queue.length;
+            const item = { imageUrl, setBy: meta.user || 'user', tx };
+            queue.push(item);
 
-    const pos = (active ? 1 : 0) + queue.length;
-    ws.send(JSON.stringify({ t: 'logo_queue_pos', pos }));
-    
-    const systemEvt = { type: 'system', text: `${item.setBy} joined the logo queue (#${pos}).`, ts: new Date().toISOString() };
-    pushLog(systemEvt);
-    broadcast({ t: 'system', text: systemEvt.text, ts: systemEvt.ts }, meta.room);
-    broadcastQueueSize(meta.room);
+            const pos = (active ? 1 : 0) + queue.length;
+            ws.send(JSON.stringify({ t: 'logo_queue_pos', pos }));
+            
+            const systemEvt = { type: 'system', text: `${item.setBy} joined the logo queue (#${pos}).`, ts: new Date().toISOString() };
+            pushLog(systemEvt);
+            broadcast({ t: 'system', text: systemEvt.text, ts: systemEvt.ts }, meta.room);
+            broadcastQueueSize(meta.room);
 
-    if (wasIdle) startNext(meta.room);
+            if (wasIdle) startNext(meta.room);
 
-  } catch (err) {
-    console.error('logo_claim verify error', err);
-    ws.send(JSON.stringify({ t: 'error', text: 'Verification error. See server logs.' }));
-  }
-  break;
+        } catch (err) {
+            console.error('logo_claim verify error', err);
+            ws.send(JSON.stringify({ t: 'error', text: 'Verification error. See server logs.' }));
+        }
+        break;
     }
   });
 
-  // --- Close Handling ---
   ws.on('close', () => {
     clients.delete(ws);
     broadcast({ t: 'count', n: clients.size }, 'global');
   });
 });
 
-// Fetch and broadcast transactions every 60 seconds
-setInterval(fetchAndBroadcastTransactions, 60000);
 
 // =================================================================
-// 9. SERVER INITIALIZATION
+// 9. SERVER INITIALIZATION & BACKGROUND TASKS
 // =================================================================
-const PORT = process.env.PORT || 8787;
-server.listen(PORT, () => console.log(`🚀 Server listening on port ${PORT}`));
-// Start the first burn timer cycle
-scheduleNextBurn();
 
-/// REPLACE THE OLD setInterval WITH THIS NEW VERSION
-
-// This function will run in the background to periodically update the cache
+/** This function will run in the background to periodically update the transaction cache */
 async function refreshTransactionCache() {
-  console.log('[Cache] Refreshing dev wallet transactions...');
+  console.log('[Cache] Refreshing treasury wallet transactions...');
   try {
     const transactions = await fetchDevWalletTransactions();
     if (transactions.length > 0) {
@@ -618,7 +491,10 @@ async function refreshTransactionCache() {
   }
 }
 
-// Wait 5 seconds on server start before the first fetch
+// Start the first burn timer cycle
+scheduleNextBurn();
+
+// Wait 5 seconds on server start before the first transaction fetch
 setTimeout(refreshTransactionCache, 5000); 
 
 // Set the periodic refresh to every 10 minutes (600 seconds)
@@ -642,41 +518,37 @@ function startBotChatter() {
     pushLog(chatEvt);
     broadcast({ t: 'chat', ...chatEvt }, 'global');
 
-    // Schedule the next bot message at a random interval
     const nextTickIn = 15000 + Math.random() * 25000; // 15 to 40 seconds
     setTimeout(botTick, nextTickIn);
   }
 
-  // Start the first bot message after a short delay
-  setTimeout(botTick, 8000); // Wait 8 seconds before the first bot talks
+  setTimeout(botTick, 8000);
 }
 
 startBotChatter();
 
 // --- User Count Fluctuation Simulation ---
 let simulatedUserCount = 0;
-
 function updateUserCount() {
   const min = 38;
   const max = 126;
   
-  // Add or subtract a small random number from the current count
-  let change = (Math.random() - 0.48) * 4; // Tends to slightly increase
+  let change = (Math.random() - 0.48) * 4;
   simulatedUserCount += change;
   
-  // Ensure the count stays within the desired min/max range
   if (simulatedUserCount < min) simulatedUserCount = min;
   if (simulatedUserCount > max) simulatedUserCount = max;
   
   const finalCount = Math.round(simulatedUserCount + clients.size);
   
-  // Broadcast the new count to everyone
   broadcast({ t: 'count', n: finalCount }, 'global');
   
-  // Schedule the next update at a random interval
-  const nextUpdateIn = 4000 + Math.random() * 7000; // 4 to 11 seconds
+  const nextUpdateIn = 4000 + Math.random() * 7000;
   setTimeout(updateUserCount, nextUpdateIn);
 }
 
-// Start the simulation after a brief delay
 setTimeout(updateUserCount, 3000);
+
+
+const PORT = process.env.PORT || 8787;
+server.listen(PORT, () => console.log(`🚀 Server listening on port ${PORT}`));
